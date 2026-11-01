@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/clew-core",
+    "crates/clew-cli",
+]
+
+[workspace.dependencies]
+tree-sitter = "0.27"
+tree-sitter-python = "0.25"
+rusqlite = { version = "0.41", features = ["bundled"] }
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+clap = { version = "4", features = ["derive"] }
+rayon = "1"
+anyhow = "1"
+walkdir = "2"

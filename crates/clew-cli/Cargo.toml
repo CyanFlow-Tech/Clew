@@ -1,0 +1,15 @@
+[package]
+name = "clew-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "clew"
+path = "src/main.rs"
+
+[dependencies]
+clew-core = { path = "../clew-core" }
+clap = { workspace = true }
+anyhow = "1"
+serde_json = { workspace = true }
+

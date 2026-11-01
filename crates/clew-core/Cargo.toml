@@ -1,0 +1,16 @@
+[package]
+name = "clew-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tree-sitter = { workspace = true }
+tree-sitter-python = { workspace = true }
+rusqlite = { workspace = true }
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rayon = { workspace = true }
+walkdir = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }

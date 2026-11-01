@@ -1,0 +1,15 @@
+/target
+notes/
+*.db
+
+# editor state
+.vscode/
+
+# internal design documents stay local
+ARCHITECTURE.md
+HANDOFF.md
+IMPLEMENTATION.md
+LAUNCH.md
+
+*~
+*.un~
