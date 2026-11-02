@@ -95,6 +95,10 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
         };
         let id = repo::insert_symbol(&tx, project_id, &module_symbol, m.is_third_party)?;
         repo::mark_entry(&tx, id, "high")?;
+        ids.insert(
+            (m.module.clone(), MODULE_ENTRY_QUALNAME.to_string()),
+            id,
+        );
         stats.entries_main_guard += 1;
     }
 
@@ -112,6 +116,16 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
         for (var, class_card) in &card.locals {
             let class_symbol = ids.get(&card_parts(class_card)).copied();
             repo::insert_local_type(&tx, sym_id, var, class_card, class_symbol)?;
+        }
+    }
+
+    // `__main__` guard bodies become the card of the module entry symbol
+    for (module, lines) in &built.module_cards {
+        let Some(&sym_id) = ids.get(&(module.clone(), MODULE_ENTRY_QUALNAME.to_string())) else {
+            continue;
+        };
+        for (ord, line) in lines.iter().enumerate() {
+            repo::insert_card_line(&tx, sym_id, ord, line)?;
         }
     }
 

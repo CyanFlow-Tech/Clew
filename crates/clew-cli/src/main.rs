@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
+mod walk;
+
 #[derive(Parser)]
 #[command(name = "clew", version, about = "Entry-point map for Python projects")]
 struct Cli {
@@ -46,6 +48,18 @@ enum Command {
         qualname: String,
         /// 1-based line number
         line: i64,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
+    /// Walk the call graph from an entry point
+    Walk {
+        /// Project root
+        project: PathBuf,
+        /// Start from this symbol (`qualname` or `module:qualname`) instead of
+        /// picking an entry point
+        #[arg(long)]
+        entry: Option<String>,
         /// Index path; relative paths resolve against the project root
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
@@ -195,6 +209,11 @@ fn main() -> anyhow::Result<()> {
                     _ => println!("    (no argument binding)"),
                 }
             }
+        }
+        Command::Walk { project, entry, db } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            walk::run(&conn, project_id, walk::Options { entry })?;
         }
     }
 

@@ -152,6 +152,18 @@ pub fn project_id_by_path(conn: &Connection, path: &str) -> rusqlite::Result<Opt
     .optional()
 }
 
+// ── notes ─────────────────────────────────────────────────────────
+
+pub fn insert_note(conn: &Connection, symbol_id: i64, text: &str) -> rusqlite::Result<i64> {
+    let ts = now();
+    conn.query_row(
+        "INSERT INTO note (symbol_id, text, created_at, updated_at)
+         VALUES (?1,?2,?3,?3) RETURNING id",
+        params![symbol_id, text, ts],
+        |row| row.get(0),
+    )
+}
+
 // ── graph rows ────────────────────────────────────────────────────
 
 pub fn insert_module(

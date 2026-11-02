@@ -55,6 +55,9 @@ cargo run -p clew-cli -- stats /path/to/project
 
 # Show the argument bindings of the calls on one line of one function
 cargo run -p clew-cli -- args /path/to/project 'Class.method' 42
+
+# Walk the call graph interactively from an entry point
+cargo run -p clew-cli -- walk /path/to/project
 ```
 
 `scan` writes a SQLite index at `<project>/.clew/index.db`; that database is the single
@@ -77,11 +80,11 @@ source of truth the GUI will read from. There is no intermediate JSON.
 
 ## Status
 
-Early development. The indexing pipeline, call resolution, persistence and CLI work; the
-GUI is next.
+Early development. The indexing pipeline, call resolution, persistence, the interactive
+walk and the CLI work; the GUI is next.
 
-Not yet implemented: the interactive `walk` command, type-aware resolution for
-`obj.method()` chains (planned via `ty`), the GUI shell, notes, and path export.
+Not yet implemented: type-aware resolution for `obj.method()` chains (planned via `ty`),
+the GUI shell, path export, and collapsing of single in/out chains in `walk`.
 
 ---
 

@@ -91,6 +91,26 @@ fn scan_persists_symbols_and_calls() {
         .unwrap();
     assert_eq!(imported, 1);
 
+    // the `__main__` guard body becomes the card of the module entry symbol
+    let guard_lines: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM card_line l JOIN symbol s ON s.id = l.symbol_id
+              WHERE s.kind = 'module' AND s.module = 'b'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(guard_lines, 1, "one statement inside the guard");
+
+    let guard_calls: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM call_site WHERE owner = '<module>'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(guard_calls, 1, "the guard's call is attributed to the module");
+
     let _ = std::fs::remove_dir_all(&root);
 }
 

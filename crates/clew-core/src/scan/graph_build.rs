@@ -72,6 +72,8 @@ pub struct Built {
     pub symbols: Vec<SymbolMeta>,
     pub imports: Vec<ImportMeta>,
     pub classes: Vec<ClassMeta>,
+    /// Body of the `if __name__ == "__main__":` guard, keyed by module
+    pub module_cards: BTreeMap<String, Vec<Line>>,
 }
 
 const BUILTINS: &[&str] = &[
@@ -123,6 +125,8 @@ pub struct Builder {
     /// card id -> local variable -> raw class name reference
     card_locals: BTreeMap<String, BTreeMap<String, String>>,
     class_ids: BTreeMap<(String, String), String>,
+    /// module -> body lines of its `__main__` guard
+    module_cards: BTreeMap<String, Vec<Line>>,
     /// rows to persist
     out_modules: Vec<ModuleMeta>,
     out_symbols: Vec<SymbolMeta>,
@@ -181,6 +185,7 @@ pub fn build_with(root: &Path, include_venv: bool) -> anyhow::Result<Built> {
         symbols: builder.out_symbols,
         imports,
         classes: builder.out_classes,
+        module_cards: builder.module_cards,
     })
 }
 
@@ -198,6 +203,7 @@ impl Default for Builder {
             class_attrs: BTreeMap::new(),
             card_locals: BTreeMap::new(),
             class_ids: BTreeMap::new(),
+            module_cards: BTreeMap::new(),
             out_modules: Vec::new(),
             out_symbols: Vec::new(),
             out_classes: Vec::new(),
@@ -251,12 +257,19 @@ impl Builder {
         self.module = file.module.clone();
 
         let mut cursor = root.walk();
+        let mut main_guard = false;
         for node in root.children(&mut cursor) {
             match node.kind() {
                 "import_statement" => self.collect_import(node),
                 "import_from_statement" => self.collect_import_from(node),
                 "function_definition" => self.add_function(node, None),
                 "class_definition" => self.add_class(node),
+                "if_statement" => {
+                    if is_main_guard(&self.src, node) {
+                        main_guard = true;
+                        self.module_body(node);
+                    }
+                }
                 "decorated_definition" => {
                     if let Some(inner) = node.child_by_field_name("definition") {
                         match inner.kind() {
@@ -275,8 +288,22 @@ impl Builder {
             path: file.path.clone(),
             src_hash,
             is_third_party: file.is_third_party,
-            has_main_guard: has_main_guard(&self.src, root),
+            has_main_guard: main_guard,
         });
+    }
+
+    /// The `__main__` guard body becomes the card of the module entry symbol.
+    fn module_body(&mut self, guard: Node) {
+        let owner = Graph::card_id(&self.module, super::entry::MODULE_ENTRY_QUALNAME);
+        let mut lines = Vec::new();
+        let mut locals = BTreeMap::new();
+        // `if_statement` uses `consequence`, not a `body` field
+        if let Some(body) = first_block(guard) {
+            self.emit_block(body, &owner, 0, &mut lines, &mut locals);
+        }
+        if !lines.is_empty() {
+            self.module_cards.insert(self.module.clone(), lines);
+        }
     }
 
     // ── imports ───────────────────────────────────────────────────
@@ -1077,21 +1104,24 @@ impl Builder {
     }
 }
 
-/// True when the module has a top-level `if __name__ == "__main__":` guard.
-fn has_main_guard(src: &[u8], root: Node) -> bool {
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
-        if node.kind() != "if_statement" {
-            continue;
-        }
-        if let Some(cond) = node.child_by_field_name("condition") {
-            let text = cond.utf8_text(src).unwrap_or("");
-            if text.contains("__name__") && text.contains("__main__") {
-                return true;
-            }
-        }
+/// First `block` child of a compound statement.
+fn first_block(node: Node) -> Option<Node> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).find(|c| c.kind() == "block")
+}
+
+/// True for `if __name__ == "__main__":`.
+fn is_main_guard(src: &[u8], node: Node) -> bool {
+    if node.kind() != "if_statement" {
+        return false;
     }
-    false
+    match node.child_by_field_name("condition") {
+        Some(cond) => {
+            let text = cond.utf8_text(src).unwrap_or("");
+            text.contains("__name__") && text.contains("__main__")
+        }
+        None => false,
+    }
 }
 
 /// Classify the callee part of a call such as `def f():`
