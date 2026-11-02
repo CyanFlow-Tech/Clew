@@ -22,18 +22,30 @@ enum Command {
         #[arg(long)]
         include_venv: bool,
     },
-    /// Export the graph (cards + call sites) as JSON
-    Export {
-        /// Project root
-        project: PathBuf,
-        /// Output JSON path
-        #[arg(long, default_value = "clew-graph.json")]
-        out: PathBuf,
-    },
     /// List the entry points discovered for a project
     Entries {
         /// Project root
         project: PathBuf,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
+    /// Print index counters read back from the database
+    Stats {
+        /// Project root
+        project: PathBuf,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
+    /// Show the argument bindings of the calls on one line of one function
+    Args {
+        /// Project root
+        project: PathBuf,
+        /// Caller qualname, e.g. `Board.__init__`
+        qualname: String,
+        /// 1-based line number
+        line: i64,
         /// Index path; relative paths resolve against the project root
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
@@ -50,6 +62,19 @@ fn resolve(root: &Path, db: PathBuf) -> PathBuf {
 
 fn display(path: &Path) -> String {
     path.display().to_string().trim_start_matches(r"\\?\").to_string()
+}
+
+/// Open the index of an already-scanned project.
+fn open_index(root: &Path, db: PathBuf) -> anyhow::Result<(clew_core::store::Conn, i64)> {
+    let db_path = resolve(root, db);
+    match clew_core::store::open_index(&db_path, root)? {
+        Some(pair) => Ok(pair),
+        None => anyhow::bail!(
+            "project not indexed yet, run scan first: {} (db {})",
+            display(root),
+            display(&db_path)
+        ),
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -71,11 +96,18 @@ fn main() -> anyhow::Result<()> {
             let stats = clew_core::scan::run::scan(&mut conn, &root, include_venv)?;
 
             println!("db         {}", display(&db_path));
-            println!("files      {}", stats.files);
-            println!("  3rd      {}", stats.third_party_files);
-            println!("symbols    {}", stats.symbols);
-            println!("calls      {}", stats.call_sites);
-            println!("edges      {}", stats.edges);
+            println!("modules    {} (3rd {})", stats.modules, stats.third_party_modules);
+            println!(
+                "symbols    {} ({} classes, {} functions/methods)",
+                stats.symbols, stats.classes, stats.functions
+            );
+            println!(
+                "calls      {} (resolved {})",
+                stats.call_sites, stats.calls_resolved
+            );
+            println!("  args     {}", stats.call_args);
+            println!("  cands    {}", stats.call_candidates);
+            println!("imports    {}", stats.imports);
             println!(
                 "entries    {} (main guard {}, pyproject {}, unresolved {})",
                 stats.entries_main_guard + stats.entries_pyproject,
@@ -83,37 +115,11 @@ fn main() -> anyhow::Result<()> {
                 stats.entries_pyproject,
                 stats.entries_unresolved
             );
-            println!("unresolved attr   {}", stats.unresolved_attribute);
-            println!("unresolved other  {}", stats.unresolved_other);
-            println!("unresolved callee {}", stats.unresolved_callee);
             println!("elapsed    {} ms", stats.elapsed_ms);
-        }
-        Command::Export { project, out } => {
-            let root = project.canonicalize()?;
-            let graph = clew_core::scan::graph_build::build(&root)?;
-            let stats = graph.stats();
-            let json = serde_json::to_string(&graph)?;
-            std::fs::write(&out, json)?;
-
-            println!("cards      {} ({} classes, {} functions/methods)", stats.cards, stats.classes, stats.functions);
-            println!("calls      {}", stats.calls);
-            println!("  exact    {}", stats.exact);
-            println!("  poly     {}", stats.poly);
-            println!("  heur     {}", stats.heur);
-            println!("  builtin  {}", stats.builtin);
-            println!("  none     {}", stats.none);
-            println!("out        {}", display(&out));
         }
         Command::Entries { project, db } => {
             let root = project.canonicalize()?;
-            let db_path = resolve(&root, db);
-            let conn = clew_core::store::open(&db_path)?;
-
-            let project_id = clew_core::store::repo::project_id_by_path(
-                &conn,
-                &root.to_string_lossy(),
-            )?
-            .ok_or_else(|| anyhow::anyhow!("project not indexed yet, run scan first: {}", display(&root)))?;
+            let (conn, project_id) = open_index(&root, db)?;
 
             let rows = clew_core::store::repo::list_entries(&conn, project_id)?;
             if rows.is_empty() {
@@ -134,6 +140,61 @@ fn main() -> anyhow::Result<()> {
                 );
             }
             println!("\n{} entry points", rows.len());
+        }
+        Command::Stats { project, db } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+
+            let mut classes = 0;
+            let mut functions = 0;
+            for (kind, n) in clew_core::store::repo::symbol_kind_counts(&conn, project_id)? {
+                match kind.as_str() {
+                    "class" => classes += n,
+                    "module" => {}
+                    _ => functions += n,
+                }
+            }
+            println!(
+                "cards      {} ({} classes, {} functions/methods)",
+                classes + functions,
+                classes,
+                functions
+            );
+
+            let confs = clew_core::store::repo::call_confidence_counts(&conn, project_id)?;
+            let total: i64 = confs.iter().map(|(_, n)| n).sum();
+            println!("calls      {total}");
+            for (name, n) in &confs {
+                println!("  {name:<8} {n}");
+            }
+        }
+        Command::Args {
+            project,
+            qualname,
+            line,
+            db,
+        } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+
+            let rows =
+                clew_core::store::repo::call_args_on_line(&conn, project_id, &qualname, line)?;
+            if rows.is_empty() {
+                println!("no call site on {qualname}:{line}");
+                return Ok(());
+            }
+
+            let mut last = String::new();
+            for r in &rows {
+                if r.call_id != last {
+                    println!("{}  →  {}  [{}]", r.call_id, r.target, r.confidence);
+                    last = r.call_id.clone();
+                }
+                match (&r.param, &r.expr) {
+                    (Some(p), Some(e)) => println!("    {p} = {e}"),
+                    _ => println!("    (no argument binding)"),
+                }
+            }
         }
     }
 

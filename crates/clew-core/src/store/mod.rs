@@ -7,11 +7,24 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
+/// Connection type alias so callers need not depend on rusqlite directly.
+pub type Conn = Connection;
+
 /// Open (creating if needed) the index database and ensure the schema exists.
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     init(&conn)?;
     Ok(conn)
+}
+
+/// Open the index of an already-indexed project, if it exists.
+pub fn open_index(db_path: &Path, root: &Path) -> rusqlite::Result<Option<(Conn, i64)>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let conn = open(db_path)?;
+    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())?;
+    Ok(project_id.map(|id| (conn, id)))
 }
 
 fn init(conn: &Connection) -> rusqlite::Result<()> {
@@ -45,8 +58,22 @@ mod tests {
             .collect();
 
         for expected in [
-            "edge", "note", "project", "session", "symbol",
-            "symbol_alias", "visit",
+            "call_arg",
+            "call_candidate",
+            "call_site",
+            "card_line",
+            "card_param",
+            "class_base",
+            "class_meta",
+            "import",
+            "local_type",
+            "module",
+            "note",
+            "project",
+            "session",
+            "symbol",
+            "symbol_alias",
+            "visit",
         ] {
             assert!(names.iter().any(|n| n == expected), "missing table {expected}");
         }

@@ -5,14 +5,74 @@
 //! Deliberately no type-system analysis here (that is ty's job): syntax level only.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use blake3::Hasher;
 use tree_sitter::{Node, Parser};
 
 use super::model::{
-    Call, CallKind, Card, CardKind, Confidence, Graph, Line, LineKind, MethodRef,
+    Call, CallKind, Card, CardKind, Confidence, Graph, Line, LineKind, MethodRef, SymbolKind,
 };
 use super::walker;
+
+/// Per-file facts that go into the `module` table.
+#[derive(Debug, Clone)]
+pub struct ModuleMeta {
+    pub module: String,
+    pub path: PathBuf,
+    pub src_hash: String,
+    pub is_third_party: bool,
+    pub has_main_guard: bool,
+}
+
+/// Definition facts that go into the `symbol` table.
+#[derive(Debug, Clone)]
+pub struct SymbolMeta {
+    pub module: String,
+    pub qualname: String,
+    pub kind: SymbolKind,
+    pub src_hash: String,
+    pub def_line: u32,
+    pub def_col: u32,
+    pub body_start: usize,
+    pub body_end: usize,
+}
+
+/// One entry of a module's import table.
+#[derive(Debug, Clone)]
+pub struct ImportMeta {
+    /// Module that contains the import statement
+    pub module: String,
+    /// Name bound in that module
+    pub local: String,
+    /// Original name: module for `import a.b`, attribute for `from m import a`
+    pub orig: String,
+    /// Imported-from module; for `import a.b` this is `a.b` as well
+    pub source_module: String,
+    pub alias: bool,
+    /// `import` form (`module_import`) instead of `from ... import`
+    pub module_import: bool,
+}
+
+/// Class-level facts: bases and the `__init__` reference.
+#[derive(Debug, Clone)]
+pub struct ClassMeta {
+    pub card_id: String,
+    pub module: String,
+    pub qualname: String,
+    pub bases: Vec<String>,
+    pub ctor: Option<String>,
+}
+
+/// Everything one tree-sitter pass produces: the graph plus the rows to persist.
+#[derive(Debug, Default)]
+pub struct Built {
+    pub graph: Graph,
+    pub modules: Vec<ModuleMeta>,
+    pub symbols: Vec<SymbolMeta>,
+    pub imports: Vec<ImportMeta>,
+    pub classes: Vec<ClassMeta>,
+}
 
 const BUILTINS: &[&str] = &[
     "print", "len", "range", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
@@ -43,6 +103,7 @@ struct RawCall {
     recv: Option<String>,
     pos: Vec<String>,
     kwargs: Vec<(String, String)>,
+    line: u32,
 }
 
 pub struct Builder {
@@ -62,11 +123,19 @@ pub struct Builder {
     /// card id -> local variable -> raw class name reference
     card_locals: BTreeMap<String, BTreeMap<String, String>>,
     class_ids: BTreeMap<(String, String), String>,
+    /// rows to persist
+    out_modules: Vec<ModuleMeta>,
+    out_symbols: Vec<SymbolMeta>,
+    out_classes: Vec<ClassMeta>,
 }
 
-pub fn build(root: &Path) -> anyhow::Result<Graph> {
+pub fn build(root: &Path) -> anyhow::Result<Built> {
+    build_with(root, false)
+}
+
+pub fn build_with(root: &Path, include_venv: bool) -> anyhow::Result<Built> {
     let root = std::fs::canonicalize(root)?;
-    let files = walker::collect_with(&root, false);
+    let files = walker::collect_with(&root, include_venv);
 
     let mut parser = Parser::new();
     parser
@@ -82,13 +151,36 @@ pub fn build(root: &Path) -> anyhow::Result<Graph> {
             Some(t) => t,
             None => continue,
         };
-        builder.file(&file.module, source.as_bytes(), tree.root_node());
+        let mut hasher = Hasher::new();
+        hasher.update(source.as_bytes());
+        let src_hash = hasher.finalize().to_hex().to_string();
+        builder.file(file, source.as_bytes(), tree.root_node(), src_hash);
     }
     builder.resolve();
 
-    Ok(Graph {
-        cards: builder.cards,
-        calls: builder.calls,
+    let mut imports = Vec::new();
+    for (module, table) in &builder.imports {
+        for info in table.values() {
+            imports.push(ImportMeta {
+                module: module.clone(),
+                local: info.local.clone(),
+                orig: info.orig.clone(),
+                source_module: info.module.clone(),
+                alias: info.alias,
+                module_import: info.module_import,
+            });
+        }
+    }
+
+    Ok(Built {
+        graph: Graph {
+            cards: builder.cards,
+            calls: builder.calls,
+        },
+        modules: builder.out_modules,
+        symbols: builder.out_symbols,
+        imports,
+        classes: builder.out_classes,
     })
 }
 
@@ -106,6 +198,9 @@ impl Default for Builder {
             class_attrs: BTreeMap::new(),
             card_locals: BTreeMap::new(),
             class_ids: BTreeMap::new(),
+            out_modules: Vec::new(),
+            out_symbols: Vec::new(),
+            out_classes: Vec::new(),
         }
     }
 }
@@ -127,9 +222,33 @@ impl Builder {
         }
     }
 
-    fn file(&mut self, module: &str, src: &[u8], root: Node) {
+    /// blake3 of the definition body, used to spot edits on rescan.
+    fn body_hash(&self, node: Node) -> String {
+        let range = match node.child_by_field_name("body") {
+            Some(body) => body.byte_range(),
+            None => node.byte_range(),
+        };
+        let mut hasher = Hasher::new();
+        hasher.update(&self.src[range]);
+        hasher.finalize().to_hex().to_string()
+    }
+
+    fn push_symbol(&mut self, node: Node, qualname: &str, kind: SymbolKind) {
+        self.out_symbols.push(SymbolMeta {
+            module: self.module.clone(),
+            qualname: qualname.to_string(),
+            kind,
+            src_hash: self.body_hash(node),
+            def_line: node.start_position().row as u32 + 1,
+            def_col: node.start_position().column as u32,
+            body_start: node.start_byte(),
+            body_end: node.end_byte(),
+        });
+    }
+
+    fn file(&mut self, file: &walker::PyFile, src: &[u8], root: Node, src_hash: String) {
         self.src = src.to_vec();
-        self.module = module.to_string();
+        self.module = file.module.clone();
 
         let mut cursor = root.walk();
         for node in root.children(&mut cursor) {
@@ -150,6 +269,14 @@ impl Builder {
                 _ => {}
             }
         }
+
+        self.out_modules.push(ModuleMeta {
+            module: file.module.clone(),
+            path: file.path.clone(),
+            src_hash,
+            is_third_party: file.is_third_party,
+            has_main_guard: has_main_guard(&self.src, root),
+        });
     }
 
     // ── imports ───────────────────────────────────────────────────
@@ -306,6 +433,11 @@ impl Builder {
             self.emit_block(body, &id, 0, &mut lines, &mut locals);
         }
         let title = format!("{qualname}({})", params.join(", "));
+        let kind = if class.is_some() {
+            CardKind::Method
+        } else {
+            CardKind::Function
+        };
 
         self.cards.insert(
             id.clone(),
@@ -315,16 +447,13 @@ impl Builder {
                 qualname: qualname.clone(),
                 title,
                 params,
-                kind: if class.is_some() {
-                    CardKind::Method
-                } else {
-                    CardKind::Function
-                },
+                kind,
                 lines,
                 methods: Vec::new(),
                 locals: BTreeMap::new(),
             },
         );
+        self.push_symbol(node, &qualname, SymbolKind::of_card(kind));
         if let Some(c) = class {
             self.methods
                 .entry((self.module.clone(), c.to_string()))
@@ -358,6 +487,7 @@ impl Builder {
         let mut ctor_lines = Vec::new();
         let mut ctor_locals = BTreeMap::new();
         let mut ctor_attrs: BTreeMap<String, String> = BTreeMap::new();
+        let mut ctor_id: Option<String> = None;
 
         if let Some(body) = node.child_by_field_name("body") {
             let mut cursor = body.walk();
@@ -379,6 +509,7 @@ impl Builder {
                     target: format!("{id}.{mname}"),
                 });
                 if mname == "__init__" {
+                    ctor_id = Some(format!("{id}.{mname}"));
                     ctor_params = self.params_of(def);
                     if let Some(b) = def.child_by_field_name("body") {
                         self.emit_block(b, &id, 0, &mut ctor_lines, &mut ctor_locals);
@@ -403,6 +534,14 @@ impl Builder {
                 locals: BTreeMap::new(),
             },
         );
+        self.push_symbol(node, &name, SymbolKind::Class);
+        self.out_classes.push(ClassMeta {
+            card_id: id.clone(),
+            module: self.module.clone(),
+            qualname: name.clone(),
+            bases: bases.clone(),
+            ctor: ctor_id,
+        });
         self.class_ids
             .insert((self.module.clone(), name.clone()), id.clone());
         self.class_bases
@@ -644,6 +783,7 @@ impl Builder {
                 recv,
                 pos,
                 kwargs,
+                line: call.start_position().row as u32 + 1,
             },
         );
         self.calls.insert(
@@ -654,6 +794,7 @@ impl Builder {
                 kind: CallKind::Other,
                 recv: None,
                 args: BTreeMap::new(),
+                ln: 0,
                 conf: Confidence::None,
                 to: None,
                 candidates: Vec::new(),
@@ -712,6 +853,7 @@ impl Builder {
                 kind: CallKind::Other,
                 recv: None,
                 args: BTreeMap::new(),
+                ln: 0,
                 conf: Confidence::None,
                 to: None,
                 candidates: Vec::new(),
@@ -721,6 +863,7 @@ impl Builder {
             call.target = raw.target.clone();
             call.kind = raw.kind;
             call.recv = raw.recv.clone();
+            call.ln = raw.line;
 
             let module = call.from.split(':').next().unwrap_or("").to_string();
             let card = self.cards.get(&call.from).cloned();
@@ -932,6 +1075,23 @@ impl Builder {
         }
         None
     }
+}
+
+/// True when the module has a top-level `if __name__ == "__main__":` guard.
+fn has_main_guard(src: &[u8], root: Node) -> bool {
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        if node.kind() != "if_statement" {
+            continue;
+        }
+        if let Some(cond) = node.child_by_field_name("condition") {
+            let text = cond.utf8_text(src).unwrap_or("");
+            if text.contains("__name__") && text.contains("__main__") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Classify the callee part of a call such as `def f():`

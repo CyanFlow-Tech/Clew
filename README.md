@@ -50,11 +50,15 @@ cargo run -p clew-cli -- scan /path/to/project
 # List discovered entry points
 cargo run -p clew-cli -- entries /path/to/project
 
-# Export the graph (cards + call sites) as JSON
-cargo run -p clew-cli -- export /path/to/project --out graph.json
+# Read the counters back from the index
+cargo run -p clew-cli -- stats /path/to/project
+
+# Show the argument bindings of the calls on one line of one function
+cargo run -p clew-cli -- args /path/to/project 'Class.method' 42
 ```
 
-`scan` writes a SQLite index; `export` produces the data the GUI will consume.
+`scan` writes a SQLite index at `<project>/.clew/index.db`; that database is the single
+source of truth the GUI will read from. There is no intermediate JSON.
 
 ---
 
@@ -73,10 +77,11 @@ cargo run -p clew-cli -- export /path/to/project --out graph.json
 
 ## Status
 
-Early development. The indexing pipeline, call resolution and CLI work; the GUI is next.
+Early development. The indexing pipeline, call resolution, persistence and CLI work; the
+GUI is next.
 
-Not yet implemented: type-aware resolution for `obj.method()` chains (planned via `ty`),
-the GUI shell, notes, and path export.
+Not yet implemented: the interactive `walk` command, type-aware resolution for
+`obj.method()` chains (planned via `ty`), the GUI shell, notes, and path export.
 
 ---
 

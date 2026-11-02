@@ -6,6 +6,37 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+/// Kind of a definition as stored in the `symbol` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SymbolKind {
+    Function,
+    Method,
+    Class,
+    /// Pseudo symbol standing for the module body (`<module>`)
+    Module,
+}
+
+impl SymbolKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SymbolKind::Function => "function",
+            SymbolKind::Method => "method",
+            SymbolKind::Class => "class",
+            SymbolKind::Module => "module",
+        }
+    }
+
+    /// Map a card kind to the symbol kind it is persisted as.
+    pub fn of_card(kind: CardKind) -> Self {
+        match kind {
+            CardKind::Class => SymbolKind::Class,
+            CardKind::Method => SymbolKind::Method,
+            CardKind::Function => SymbolKind::Function,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CardKind {
@@ -20,6 +51,16 @@ pub enum LineKind {
     Stmt,
     Call,
     Branch,
+}
+
+impl LineKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LineKind::Stmt => "stmt",
+            LineKind::Call => "call",
+            LineKind::Branch => "branch",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,6 +114,18 @@ pub enum CallKind {
     Other,
 }
 
+impl CallKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CallKind::Name => "name",
+            CallKind::SelfRef => "self",
+            CallKind::SelfAttr => "selfattr",
+            CallKind::Attr => "attr",
+            CallKind::Other => "other",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
@@ -88,6 +141,18 @@ pub enum Confidence {
     None,
 }
 
+impl Confidence {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Confidence::Exact => "exact",
+            Confidence::Poly => "poly",
+            Confidence::Heur => "heur",
+            Confidence::Builtin => "builtin",
+            Confidence::None => "none",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Call {
     pub from: String,
@@ -97,6 +162,9 @@ pub struct Call {
     pub recv: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub args: BTreeMap<String, String>,
+    /// 1-based line of the call expression itself
+    #[serde(default)]
+    pub ln: u32,
     pub conf: Confidence,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,

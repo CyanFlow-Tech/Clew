@@ -155,7 +155,6 @@ dependencies = [
  "anyhow",
  "clap",
  "clew-core",
- "serde_json",
 ]
 
 [[package]]
@@ -167,7 +166,6 @@ dependencies = [
  "rayon",
  "rusqlite",
  "serde",
- "serde_json",
  "toml",
  "tree-sitter",
  "tree-sitter-python",

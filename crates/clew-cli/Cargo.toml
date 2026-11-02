@@ -11,5 +11,4 @@ path = "src/main.rs"
 clew-core = { path = "../clew-core" }
 clap = { workspace = true }
 anyhow = "1"
-serde_json = { workspace = true }
 
