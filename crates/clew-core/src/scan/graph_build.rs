@@ -4,7 +4,7 @@
 //! inference, then project-wide uniqueness.
 //! Deliberately no type-system analysis here (that is ty's job): syntax level only.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use blake3::Hasher;
@@ -84,8 +84,6 @@ const BUILTINS: &[&str] = &[
     "object", "frozenset", "bytes",
 ];
 
-const SUMMARY_MAX_CALLS: usize = 3;
-
 /// Maximum characters per line before truncation.
 const LINE_LIMIT: usize = 96;
 
@@ -127,6 +125,8 @@ pub struct Builder {
     class_ids: BTreeMap<(String, String), String>,
     /// module -> body lines of its `__main__` guard
     module_cards: BTreeMap<String, Vec<Line>>,
+    /// Counter for the `%N` temporaries, unique within one card
+    temp_counter: usize,
     /// rows to persist
     out_modules: Vec<ModuleMeta>,
     out_symbols: Vec<SymbolMeta>,
@@ -204,6 +204,7 @@ impl Default for Builder {
             card_locals: BTreeMap::new(),
             class_ids: BTreeMap::new(),
             module_cards: BTreeMap::new(),
+            temp_counter: 0,
             out_modules: Vec::new(),
             out_symbols: Vec::new(),
             out_classes: Vec::new(),
@@ -216,8 +217,7 @@ impl Builder {
         node.utf8_text(&self.src).unwrap_or("").to_string()
     }
 
-    fn first_line(&self, node: Node) -> String {
-        let raw = self.text(node);
+    fn clipped(&self, raw: &str) -> String {
         let line = raw.lines().next().unwrap_or("").trim();
         if line.chars().count() > LINE_LIMIT {
             let mut s: String = line.chars().take(LINE_LIMIT - 1).collect();
@@ -225,6 +225,118 @@ impl Builder {
             s
         } else {
             line.to_string()
+        }
+    }
+
+    fn first_line(&self, node: Node) -> String {
+        self.clipped(&self.text(node))
+    }
+
+    /// Source text of `start..end` with the given call spans replaced.
+    ///
+    /// Replacements are applied back to front so earlier byte offsets stay valid.
+    fn text_replacing(
+        &self,
+        start: usize,
+        end: usize,
+        mut repls: Vec<(usize, usize, String)>,
+    ) -> String {
+        let mut out = String::from_utf8_lossy(&self.src[start..end]).to_string();
+        repls.sort_by_key(|(s, _, _)| *s);
+        for (s, e, name) in repls.into_iter().rev() {
+            if s >= start && e <= end && e - start <= out.len() {
+                out.replace_range(s - start..e - start, &name);
+            }
+        }
+        out
+    }
+
+    /// Expand one statement into its evaluation order.
+    ///
+    /// Every nested call is lifted into `%0 = inner(…)` and substituted back into
+    /// its parent, so the card reads top-down in the order Python evaluates it:
+    /// innermost first, the enclosing call last.
+    fn emit_call_sequence(
+        &mut self,
+        stmt: Node,
+        calls: &[Node],
+        owner: &str,
+        indent: u8,
+        ln: u32,
+        out: &mut Vec<Line>,
+    ) {
+        let parents = call_parents(calls);
+        let mut roots = Vec::new();
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); calls.len()];
+        for (i, parent) in parents.iter().enumerate() {
+            match parent {
+                Some(p) => children[*p].push(i),
+                None => roots.push(i),
+            }
+        }
+
+        let mut order = Vec::new();
+        for &root in &roots {
+            postorder(root, &children, &mut order);
+        }
+
+        // a lone top-level call keeps the statement line as its own row
+        let statement_call = if roots.len() == 1 { Some(roots[0]) } else { None };
+
+        let mut name_of: HashMap<usize, String> = HashMap::new();
+        for &i in &order {
+            if statement_call == Some(i) {
+                continue;
+            }
+            name_of.insert(i, format!("%{}", self.temp_counter));
+            self.temp_counter += 1;
+        }
+
+        for &i in &order {
+            let Some(name) = name_of.get(&i).cloned() else {
+                continue;
+            };
+            let repls = repls_within(
+                calls,
+                &name_of,
+                Some(i),
+                calls[i].start_byte(),
+                calls[i].end_byte(),
+            );
+            let body = self.text_replacing(calls[i].start_byte(), calls[i].end_byte(), repls);
+            let cs_id = format!("{owner}#{}", out.len());
+            self.record_call(cs_id.clone(), owner, calls[i]);
+            out.push(Line {
+                k: LineKind::Call,
+                text: format!("{name} = {}", self.clipped(&body)),
+                indent,
+                ln,
+                cs: Some(cs_id),
+            });
+        }
+
+        let repls = repls_within(calls, &name_of, None, stmt.start_byte(), stmt.end_byte());
+        let body = self.text_replacing(stmt.start_byte(), stmt.end_byte(), repls);
+        let text = self.clipped(&body);
+        match statement_call {
+            Some(root) => {
+                let cs_id = format!("{owner}#{}", out.len());
+                self.record_call(cs_id.clone(), owner, calls[root]);
+                out.push(Line {
+                    k: LineKind::Call,
+                    text,
+                    indent,
+                    ln,
+                    cs: Some(cs_id),
+                });
+            }
+            None => out.push(Line {
+                k: LineKind::Stmt,
+                text,
+                indent,
+                ln,
+                cs: None,
+            }),
         }
     }
 
@@ -297,12 +409,17 @@ impl Builder {
         let owner = Graph::card_id(&self.module, super::entry::MODULE_ENTRY_QUALNAME);
         let mut lines = Vec::new();
         let mut locals = BTreeMap::new();
+        self.temp_counter = 0;
         // `if_statement` uses `consequence`, not a `body` field
         if let Some(body) = first_block(guard) {
             self.emit_block(body, &owner, 0, &mut lines, &mut locals);
         }
         if !lines.is_empty() {
             self.module_cards.insert(self.module.clone(), lines);
+        }
+        // module-level `n1 = NNetWrapper(g)` must feed call resolution too
+        if !locals.is_empty() {
+            self.card_locals.insert(owner, locals);
         }
     }
 
@@ -454,6 +571,7 @@ impl Builder {
         };
         let id = Graph::card_id(&self.module, &qualname);
         let params = self.params_of(node);
+        self.temp_counter = 0;
         let mut lines = Vec::new();
         let mut locals = BTreeMap::new();
         if let Some(body) = node.child_by_field_name("body") {
@@ -477,6 +595,10 @@ impl Builder {
                 kind,
                 lines,
                 methods: Vec::new(),
+                bases: Vec::new(),
+                ctor: None,
+                ctor_owner: None,
+                external_base: None,
                 locals: BTreeMap::new(),
             },
         );
@@ -498,12 +620,14 @@ impl Builder {
         };
         let name = self.text(name_node);
         let id = Graph::card_id(&self.module, &name);
+        self.temp_counter = 0;
 
         let mut bases = Vec::new();
         if let Some(supers) = node.child_by_field_name("superclasses") {
             let mut cursor = supers.walk();
             for ch in supers.children(&mut cursor) {
-                if ch.kind() == "identifier" {
+                // `Base` is an identifier, `mod.Base` / `unittest.TestCase` an attribute
+                if matches!(ch.kind(), "identifier" | "attribute") {
                     bases.push(self.text(ch));
                 }
             }
@@ -558,6 +682,10 @@ impl Builder {
                 kind: CardKind::Class,
                 lines: ctor_lines,
                 methods,
+                bases: bases.clone(),
+                ctor: None,
+                ctor_owner: None,
+                external_base: None,
                 locals: BTreeMap::new(),
             },
         );
@@ -694,33 +822,7 @@ impl Builder {
                 _ => {
                     let calls = collect_calls(stmt);
                     let ln = stmt.start_position().row as u32 + 1;
-                    if calls.len() >= 2 {
-                        for (i, call) in calls.iter().take(SUMMARY_MAX_CALLS).enumerate() {
-                            let cs_id = format!("{owner}#{}", out.len());
-                            self.record_call(cs_id.clone(), owner, *call);
-                            out.push(Line {
-                                k: LineKind::Call,
-                                text: if i == 0 {
-                                    self.first_line(stmt)
-                                } else {
-                                    format!("↳ {}", self.first_line(*call))
-                                },
-                                indent: if i == 0 { indent } else { indent + 1 },
-                                ln,
-                                cs: Some(cs_id),
-                            });
-                        }
-                    } else if calls.len() == 1 {
-                        let cs_id = format!("{owner}#{}", out.len());
-                        self.record_call(cs_id.clone(), owner, calls[0]);
-                        out.push(Line {
-                            k: LineKind::Call,
-                            text: self.first_line(stmt),
-                            indent,
-                            ln,
-                            cs: Some(cs_id),
-                        });
-                    } else {
+                    if calls.is_empty() {
                         out.push(Line {
                             k: LineKind::Stmt,
                             text: self.first_line(stmt),
@@ -728,6 +830,8 @@ impl Builder {
                             ln,
                             cs: None,
                         });
+                    } else {
+                        self.emit_call_sequence(stmt, &calls, owner, indent, ln, out);
                     }
                     // local variable type: x = Class(...), wrapped in expression_statement
                     let assign = if stmt.kind() == "assignment" {
@@ -1173,6 +1277,59 @@ fn collect_calls(stmt: Node) -> Vec<Node> {
         }
     }
     out.sort_by_key(|n| (n.start_position().row, n.start_position().column));
+    out
+}
+
+/// Index of the smallest enclosing call for each entry of `calls`.
+fn call_parents(calls: &[Node]) -> Vec<Option<usize>> {
+    let mut parents = vec![None; calls.len()];
+    for i in 0..calls.len() {
+        let (si, ei) = (calls[i].start_byte(), calls[i].end_byte());
+        let mut best: Option<(usize, usize)> = None;
+        for j in 0..calls.len() {
+            if i == j {
+                continue;
+            }
+            let (sj, ej) = (calls[j].start_byte(), calls[j].end_byte());
+            if sj <= si && ei <= ej && (sj != si || ej != ei) {
+                let span = ej - sj;
+                if best.map_or(true, |(len, _)| span < len) {
+                    best = Some((span, j));
+                }
+            }
+        }
+        parents[i] = best.map(|(_, j)| j);
+    }
+    parents
+}
+
+/// Children before parents: the order Python evaluates a nested expression.
+fn postorder(idx: usize, children: &[Vec<usize>], out: &mut Vec<usize>) {
+    for &child in &children[idx] {
+        postorder(child, children, out);
+    }
+    out.push(idx);
+}
+
+/// Call spans inside `start..end` that got a temporary name, minus `exclude`.
+fn repls_within(
+    calls: &[Node],
+    name_of: &HashMap<usize, String>,
+    exclude: Option<usize>,
+    start: usize,
+    end: usize,
+) -> Vec<(usize, usize, String)> {
+    let mut out = Vec::new();
+    for (&i, name) in name_of {
+        if Some(i) == exclude {
+            continue;
+        }
+        let (s, e) = (calls[i].start_byte(), calls[i].end_byte());
+        if start <= s && e <= end {
+            out.push((s, e, name.clone()));
+        }
+    }
+    out.sort_by_key(|(s, _, _)| *s);
     out
 }
 

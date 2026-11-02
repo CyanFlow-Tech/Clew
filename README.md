@@ -41,7 +41,7 @@ time, and remembers the path you took.
 
 ## What works today
 
-The Rust core and a CLI exist; the GUI does not yet.
+The Rust core, the CLI, and a Tauri desktop shell with a first-pass GUI.
 
 ```bash
 # Build the index for a project
@@ -58,10 +58,14 @@ cargo run -p clew-cli -- args /path/to/project 'Class.method' 42
 
 # Walk the call graph interactively from an entry point
 cargo run -p clew-cli -- walk /path/to/project
+
+# Open the desktop app, which reads the same index
+cargo run -p clew-app -- /path/to/project
 ```
 
 `scan` writes a SQLite index at `<project>/.clew/index.db`; that database is the single
-source of truth the GUI will read from. There is no intermediate JSON.
+source of truth the GUI reads from. There is no intermediate JSON, and the frontend is
+plain HTML + JS loaded straight out of `src/` — no bundler, no npm.
 
 ---
 
@@ -81,10 +85,15 @@ source of truth the GUI will read from. There is no intermediate JSON.
 ## Status
 
 Early development. The indexing pipeline, call resolution, persistence, the interactive
-walk and the CLI work; the GUI is next.
+walk, the CLI and the desktop GUI all work.
 
-Not yet implemented: type-aware resolution for `obj.method()` chains (planned via `ty`),
-the GUI shell, path export, and collapsing of single in/out chains in `walk`.
+The GUI is the interaction model this project is built around: cards you open in place,
+a `◆` on every call that shows what it bound, class cards that grow only the methods you
+have actually entered, and the whole graph re-laid out as you go.
+
+Not yet implemented: notes attached to cards (the table and the command exist, the UI
+does not), visited/unvisited shading, type-aware resolution for `obj.method()` chains
+(planned via `ty`), path export, and collapsing of single in/out chains in `walk`.
 
 ---
 

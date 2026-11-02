@@ -93,6 +93,18 @@ pub struct Card {
     pub lines: Vec<Line>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub methods: Vec<MethodRef>,
+    /// Base class names as written in the source
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bases: Vec<String>,
+    /// Effective `__init__` card id, found along the MRO
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctor: Option<String>,
+    /// Class that actually defines `ctor`; differs from this class when inherited
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctor_owner: Option<String>,
+    /// Base class living outside the project (its `__init__` cannot be shown)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_base: Option<String>,
     /// Local variable -> class card id (inferred from constructor assignments)
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub locals: BTreeMap<String, String>,

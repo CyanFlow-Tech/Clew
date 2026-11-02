@@ -13,3 +13,6 @@ LAUNCH.md
 
 *~
 *.un~
+
+# tauri generated schemas
+src-tauri/gen/

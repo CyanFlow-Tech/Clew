@@ -14,16 +14,37 @@ class A:
         return helper(self.x)
 
 
+class B(A):
+    def extra(self):
+        return 1
+
+
+class D(dict):
+    def __getattr__(self, name):
+        return self[name]
+
+
+class E(unittest.TestCase):
+    def test_x(self):
+        return 1
+
+
+class Plain:
+    def go(self):
+        return 1
+
+
 def helper(v):
     return v
 ";
 
 const B_PY: &str = "\
-from a import helper
+from a import A, helper
 
 
 if __name__ == \"__main__\":
-    helper(1)
+    a = A(1)
+    a.run()
 ";
 
 fn setup(name: &str) -> std::path::PathBuf {
@@ -44,8 +65,11 @@ fn scan_persists_symbols_and_calls() {
     let stats = scan(&mut conn, &root, false).unwrap();
 
     assert_eq!(stats.modules, 2, "one row per source file");
-    assert_eq!(stats.classes, 1);
-    assert_eq!(stats.symbols, 4, "A, A.__init__, A.run, helper");
+    assert_eq!(stats.classes, 5);
+    assert_eq!(
+        stats.symbols, 12,
+        "A, A.__init__, A.run, B, B.extra, D, D.__getattr__, E, E.test_x, Plain, Plain.go, helper"
+    );
     assert_eq!(stats.entries_main_guard, 1);
 
     let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
@@ -100,7 +124,7 @@ fn scan_persists_symbols_and_calls() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(guard_lines, 1, "one statement inside the guard");
+    assert_eq!(guard_lines, 2, "two statements inside the guard");
 
     let guard_calls: i64 = conn
         .query_row(
@@ -109,7 +133,55 @@ fn scan_persists_symbols_and_calls() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(guard_calls, 1, "the guard's call is attributed to the module");
+    assert_eq!(guard_calls, 2, "the guard's calls are attributed to the module");
+
+    // `a = A(1)` at module level must feed `a.run()` resolution, same as in a function
+    let (conf, dst): (String, i64) = conn
+        .query_row(
+            "SELECT confidence, dst_symbol FROM call_site
+              WHERE owner = '<module>' AND target = 'run'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(conf, "exact", "module-level local type must resolve a.run()");
+    let dst_qual: String = conn
+        .query_row("SELECT qualname FROM symbol WHERE id = ?1", [dst], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(dst_qual, "A.run");
+
+    // the snapshot the GUI consumes carries base classes and the method directory
+    let snap = clew_core::snapshot::snapshot(&conn, project_id).unwrap();
+    let b = snap.cards.get("a:B").expect("class B card");
+    assert_eq!(b.bases, vec!["A".to_string()]);
+    assert!(b.methods.iter().any(|m| m.name == "extra"));
+    let a = snap.cards.get("a:A").expect("class A card");
+    assert!(a.methods.iter().any(|m| m.name == "__init__"));
+    assert_eq!(snap.entries.len(), 1);
+
+    // constructors follow the MRO: B inherits A.__init__, D falls back to `dict`
+    assert_eq!(a.ctor.as_deref(), Some("a:A.__init__"));
+    assert_eq!(a.ctor_owner.as_deref(), Some("A"));
+    assert_eq!(b.ctor.as_deref(), Some("a:A.__init__"));
+    assert_eq!(b.ctor_owner.as_deref(), Some("A"), "inherited from A");
+    let d = snap.cards.get("a:D").expect("class D card");
+    assert_eq!(d.ctor, None, "dict.__init__ is outside the project");
+    assert_eq!(d.external_base.as_deref(), Some("dict"));
+    assert!(d.methods.iter().any(|m| m.name == "__getattr__"));
+
+    // dotted bases are kept whole, and land in external_base
+    let e = snap.cards.get("a:E").expect("class E card");
+    assert_eq!(e.bases, vec!["unittest.TestCase".to_string()]);
+    assert_eq!(e.ctor, None);
+    assert_eq!(e.external_base.as_deref(), Some("unittest.TestCase"));
+
+    // no base and no __init__: object is the implicit base
+    let d_plain = snap.cards.get("a:Plain").expect("class Plain card");
+    assert!(d_plain.bases.is_empty());
+    assert_eq!(d_plain.ctor, None);
+    assert_eq!(d_plain.external_base.as_deref(), Some("object"));
 
     let _ = std::fs::remove_dir_all(&root);
 }

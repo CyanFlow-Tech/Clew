@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/clew-core",
     "crates/clew-cli",
+    "src-tauri",
 ]
 
 [workspace.dependencies]

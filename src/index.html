@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Clew 原型 E · 真实项目</title>
+<style>
+  :root{--bg:#14171c;--card:#1c2128;--bd:#2d333b;--tx:#d7dde5;--dim:#7d8794;
+        --acc:#58a6ff;--call:#f0883e;--data:#3fb950;--br:#bc8cff;--sel:#e3b341;
+        --heur:#d2a24c;--dead:#4b5563;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
+    font:12.5px/1.55 "Cascadia Mono",Consolas,monospace;overflow:hidden}
+  #top{position:fixed;inset:0 0 auto 0;height:42px;display:flex;align-items:center;gap:8px;
+    padding:0 12px;background:#0f1216;border-bottom:1px solid var(--bd);z-index:40;overflow-x:auto}
+  #top b{color:var(--acc);white-space:nowrap}
+  .ent{background:#1f2630;border:1px solid var(--bd);border-radius:4px;padding:1px 7px;
+    cursor:pointer;white-space:nowrap;font-size:11px;color:var(--tx)}
+  .ent:hover{border-color:var(--acc);color:var(--acc)}
+  #trail{display:flex;gap:5px;align-items:center;white-space:nowrap;flex:1;min-width:0;overflow-x:auto}
+  #trail span{color:var(--acc);cursor:pointer}
+  #trail span.cur{color:var(--sel);font-weight:600}
+  #trail i{color:var(--dim);font-style:normal}
+  #graph{position:absolute;inset:42px 0 0 0;overflow:auto}
+  #world{position:relative;width:16000px;height:12000px}
+  svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+  .card{position:absolute;width:720px;background:var(--card);border:1px solid var(--bd);
+    border-radius:8px;box-shadow:0 6px 18px #0006;
+    transition:left .18s ease,top .18s ease}
+  .card.sel{border-color:var(--sel);box-shadow:0 0 0 3px #e3b34133}
+  .head{display:flex;align-items:center;gap:7px;padding:5px 8px;border-bottom:1px solid var(--bd);
+    cursor:pointer}
+  .head .t{color:var(--acc);font-weight:600;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;flex:1}
+  .head .m{color:var(--dim);font-size:10px;white-space:nowrap;max-width:120px;
+    overflow:hidden;text-overflow:ellipsis}
+  .head .btn{background:#262c34;border:1px solid var(--bd);border-radius:3px;padding:0 5px;
+    font-size:10px;color:var(--dim);cursor:pointer}
+  .head .btn:hover{color:var(--acc);border-color:var(--acc)}
+  .head .btn.close:hover{color:#f85149;border-color:#f85149}
+  .head .hub{background:var(--call);color:#14171c;border-radius:3px;padding:0 4px;font-size:9px}
+  .kindbadge{background:#2d333b;color:var(--dim);border-radius:3px;padding:0 4px;font-size:9px}
+  .body{padding:3px 0 5px}
+  .ln{position:relative;padding:1px 26px 1px 34px;white-space:pre;overflow:hidden;
+    text-overflow:ellipsis}
+  .ln .txt{display:inline}
+  .bind{position:relative;margin:1px 10px 3px 34px;padding:2px 8px;border-left:2px solid var(--data);
+    color:var(--data);font-size:11px;background:#11161d;border-radius:0 4px 4px 0;
+    white-space:pre-wrap;word-break:break-word;line-height:1.5}
+  .bind .p{color:var(--data)}
+  .bind .a{color:#e6edf3}
+  .bind .sep{color:#4b5563}
+  .ln .lnum{position:absolute;left:4px;top:1px;color:#4b5563;font-size:10px;
+    -webkit-user-select:none;user-select:none}
+  .ln.stmt{color:#c9d1d9}
+  .ln.branch{color:var(--br)}
+  .ln.call{color:var(--call)}
+  .ln.more{color:var(--dim);font-style:italic;cursor:pointer}
+  .ln.more:hover{color:var(--acc)}
+  .ext{border-bottom:1px dotted var(--acc);cursor:help}
+  .anchor{position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:10px;
+    cursor:pointer;z-index:5;color:var(--call);white-space:nowrap}
+  .anchor.on{color:var(--sel)}
+  .anchor.heur{color:var(--heur);opacity:.85}
+  .anchor.poly{color:#bc8cff}
+  .anchor.dead{color:var(--dead);cursor:default}
+  .anchor.done{color:var(--data)}
+
+  /* 手风琴：类卡片里的方法 */
+  .acc{border-top:1px solid #22272e;margin-top:2px}
+  .acc-head{display:flex;align-items:center;gap:6px;padding:3px 8px;cursor:pointer;
+    color:var(--dim);font-size:11.5px}
+  .acc-head:hover{background:#2d333b80;color:var(--acc)}
+  .acc-head.sel-row{background:#3a2f14;color:var(--sel)}
+  .acc-head.sel-row .nm{color:var(--sel)}
+  .card.related{border-color:#a8873555;box-shadow:0 0 0 2px #e3b34122}
+  .acc-head .caret{color:var(--acc)}
+  .acc-head .nm{color:var(--acc);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .acc-head .cnt{color:var(--call);font-size:9.5px}
+  .acc-body{padding-left:10px;border-left:2px solid #2d333b;margin-left:10px}
+  .hidden-note{padding:3px 10px;color:var(--dim);font-size:10.5px;font-style:italic}
+
+  #bubble{position:fixed;max-width:460px;background:#0f1216;border:1px solid var(--bd);
+    border-radius:6px;padding:8px 10px;font-size:11.5px;z-index:60;display:none;
+    box-shadow:0 8px 24px #000a}
+  #bubble .row{display:flex;gap:8px;padding:1px 0}
+  #bubble .k{color:var(--data);min-width:80px}
+  #bubble .v{color:#e6edf3;word-break:break-all}
+  #bubble .hdr{color:var(--call);margin-bottom:4px}
+  #bubble .note{color:var(--dim);border-top:1px solid #22272e;margin-top:5px;padding-top:4px}
+  #focus{position:fixed;inset:42px 0 0 0;background:#0b0e12ee;z-index:50;display:none;
+    padding:36px;overflow:auto}
+  #focus .card{position:relative;left:auto;top:auto;margin:0 auto;width:min(1000px,92vw)}
+  #hint{position:fixed;left:12px;bottom:8px;color:var(--dim);font-size:11px;z-index:41}
+</style>
+</head>
+<body>
+<div id="top"><b>真实项目</b><span style="color:var(--dim)">入口</span><span id="entries"></span>
+  <span style="color:var(--dim)">|</span><div id="trail"></div></div>
+<div id="graph"><div id="world"><svg id="edges"></svg></div></div>
+<div id="bubble"></div>
+<div id="focus"></div>
+<div id="hint">◆ 橙色=精确 · 黄=启发式 · 紫=多态 · 灰=未解析 · ✕ 关闭（引用归零才删） · 类里的方法点开就地展开</div>
+
+<script>
+  // 数据来自索引库：先打开项目，再一次性取出整张图，最后加载界面脚本
+  const api = window.__TAURI__.core;
+
+  function clewFail(msg) {
+    document.body.innerHTML =
+      '<pre style="color:#f88;padding:24px;white-space:pre-wrap">' + msg + "</pre>";
+  }
+
+  window.onerror = function (msg, src, line, col, err) {
+    clewFail(msg + "\n" + (src || "") + ":" + line + ":" + col +
+             "\n" + ((err && err.stack) || ""));
+  };
+  window.addEventListener("unhandledrejection", function (ev) {
+    clewFail("promise: " + String((ev.reason && ev.reason.stack) || ev.reason));
+  });
+
+  function clewPrompt() {
+    const overlay = document.createElement("div");
+    overlay.style.cssText =
+      "position:fixed;inset:0;background:#14161af2;display:grid;place-items:center;" +
+      "z-index:99;font:14px ui-monospace,Consolas,monospace;color:#d6dae1";
+    overlay.innerHTML =
+      '<div><p>输入已索引的项目路径，回车打开（没索引过先跑 clew scan）：</p>' +
+      '<input id="clew-path" spellcheck="false" style="width:60vw;padding:8px;' +
+      'background:#0f1115;color:#d6dae1;border:1px solid #2a2f38;font:inherit">' +
+      '<p id="clew-err" style="color:#f88;white-space:pre-wrap"></p></div>';
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector("#clew-path");
+    const err = overlay.querySelector("#clew-err");
+    input.focus();
+    input.onkeydown = function (ev) {
+      if (ev.key !== "Enter") return;
+      api
+        .invoke("open_project", { path: input.value.trim() })
+        .then(function () {
+          overlay.remove();
+          return clewMount();
+        })
+        .catch(function (e) {
+          err.textContent = String(e);
+        });
+    };
+  }
+
+  function clewMount() {
+    return api.invoke("graph").then(function (data) {
+      window.__CLEW__ = data;
+      const s = document.createElement("script");
+      s.src = "app.js";
+      s.onerror = function () {
+        clewFail("app.js 加载失败");
+      };
+      document.body.appendChild(s);
+    });
+  }
+
+  api
+    .invoke("boot")
+    .then(function (info) {
+      if (info) return clewMount();
+      clewPrompt();
+    })
+    .catch(clewFail);
+</script>
+</body>
+</html>
