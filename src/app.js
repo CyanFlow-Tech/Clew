@@ -15,16 +15,16 @@ const graph = document.getElementById("graph");
 const bubble = document.getElementById("bubble");
 const focusLayer = document.getElementById("focus");
 
-const cardEls = {};       // 已放置的卡片 DOM
-const state = {};         // summary | full | mini
-const openMethods = {};   // 类卡片里展开的方法
-const parentOf = {};      // 放置时的父卡片
-const methodSet = {};     // 类卡片 -> 已出现的成员方法（按需生成）
-const activated = new Set(); // 被用户实际跟进过的调用点（cs id）
+let cardEls = {};         // 已放置的卡片 DOM
+let state = {};           // summary | full | mini
+let openMethods = {};     // 类卡片里展开的方法
+let parentOf = {};        // 放置时的父卡片
+let methodSet = {};       // 类卡片 -> 已出现的成员方法（按需生成）
+let activated = new Set();   // 被用户实际跟进过的调用点（cs id）
 let selectedCs = null;       // 当前显示绑定注释的那一跳
 let selectedRow = null;      // 当前选中的方法（用于类目录高亮）
 let selectedId = null;       // 当前选中的卡片
-const roots = new Set();  // 入口卡片
+let roots = new Set();    // 入口卡片
 
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 function hasMore(id) { return NODES[id].lines.length > SUMMARY; }
@@ -609,30 +609,308 @@ function renderTrail() {
   });
 }
 
-// ─── 入口 ───────────────────────────────────────────────────────
-ENTRIES.slice(0, 12).forEach(function (e) {
-  if (!e.id || !NODES[e.id]) return;
-  const b = document.createElement("button");
-  b.className = "ent";
-  b.textContent = e.label;
-  b.onclick = function () {
-    roots.add(e.id);
-    expand(e.id);
+// ─── 入口 tab：每个入口一份独立的图 ─────────────────────────────
+const tabs = [];
+let activeTab = -1;
+
+function blankTab(entry) {
+  return {
+    entryId: entry.id,
+    label: entry.label,
+    cardEls: {},
+    state: {},
+    openMethods: {},
+    parentOf: {},
+    methodSet: {},
+    roots: new Set(),
+    activated: new Set(),
+    selectedId: null,
+    selectedRow: null,
+    trail: [],
+    nodes: [],
   };
-  document.getElementById("entries").appendChild(b);
+}
+
+function saveTab() {
+  if (activeTab < 0) return;
+  const t = tabs[activeTab];
+  t.cardEls = cardEls;
+  t.state = state;
+  t.openMethods = openMethods;
+  t.parentOf = parentOf;
+  t.methodSet = methodSet;
+  t.roots = roots;
+  t.activated = activated;
+  t.selectedId = selectedId;
+  t.selectedRow = selectedRow;
+  t.trail = trail;
+  t.nodes = Array.prototype.slice
+    .call(world.children)
+    .filter(function (el) { return el !== svg; });
+}
+
+function loadTab(i) {
+  const t = tabs[i];
+  cardEls = t.cardEls;
+  state = t.state;
+  openMethods = t.openMethods;
+  parentOf = t.parentOf;
+  methodSet = t.methodSet;
+  roots = t.roots;
+  activated = t.activated;
+  selectedId = t.selectedId;
+  selectedRow = t.selectedRow;
+  trail = t.trail;
+
+  hideBubble();
+  closeFocus();
+
+  // 换掉画布里的卡片，svg 留着当连线层
+  Array.prototype.slice.call(world.children).forEach(function (el) {
+    if (el !== svg) world.removeChild(el);
+  });
+  t.nodes.forEach(function (el) { world.appendChild(el); });
+
+  activeTab = i;
+  renderTabs();
+  refreshSelectionUI(selectedId);
+  renderTrail();
+  relayout();
+}
+
+function switchTab(i) {
+  if (i === activeTab || !tabs[i]) return;
+  saveTab();
+  loadTab(i);
+  if (!tabs[i].nodes.length) {
+    roots.add(tabs[i].entryId);
+    expand(tabs[i].entryId);   // 首次进这个 tab：默认显示它的入口卡片
+    saveTab();
+  }
+}
+
+let entrySelect = null;
+
+function renderTabs() {
+  const box = document.getElementById("entries");
+  if (!entrySelect) {
+    entrySelect = document.createElement("select");
+    entrySelect.className = "ent-select";
+    entrySelect.title = "选择要看的入口";
+    tabs.forEach(function (t, i) {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = t.label.replace(":<module>", "");
+      o.title = t.label;
+      entrySelect.appendChild(o);
+    });
+    entrySelect.onchange = function () {
+      switchTab(Number(entrySelect.value));
+    };
+    box.appendChild(entrySelect);
+  }
+  entrySelect.value = String(activeTab < 0 ? 0 : activeTab);
+}
+
+ENTRIES.slice(0, 12).forEach(function (e) {
+  if (!e || !e.id || !NODES[e.id]) return;
+  tabs.push(blankTab(e));
 });
+
+if (tabs.length) {
+  loadTab(0);
+  roots.add(tabs[0].entryId);
+  expand(tabs[0].entryId);
+  saveTab();
+}
 
 window.addEventListener("resize", function () { relayout(); });
 graph.addEventListener("scroll", draw);
 
-// ─── 启动：直接展开第一个入口 ─────────────────────────────
-(function () {
-  for (var i = 0; i < ENTRIES.length; i++) {
-    var e = ENTRIES[i];
-    if (e && e.id && NODES[e.id]) {
-      roots.add(e.id);
-      expand(e.id);
+
+// ─── 画布拖拽 ───────────────────────────────────────────────────
+(function panCanvas() {
+  let panning = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  // 卡片和控件上的按下要留给点击，别被平移吃掉
+  function interactive(target) {
+    return !!(
+      target &&
+      target.closest &&
+      target.closest(".card, .acc-head, button, select, input, textarea")
+    );
+  }
+
+  graph.addEventListener("mousedown", function (e) {
+    if (e.button !== 0 || interactive(e.target)) return;
+    panning = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = graph.scrollLeft;
+    startTop = graph.scrollTop;
+    document.body.classList.add("panning");
+    e.preventDefault();
+  });
+
+  window.addEventListener("mousemove", function (e) {
+    if (!panning) return;
+    graph.scrollLeft = startLeft - (e.clientX - startX);
+    graph.scrollTop = startTop - (e.clientY - startY);
+  });
+
+  function stopPan() {
+    if (!panning) return;
+    panning = false;
+    document.body.classList.remove("panning");
+  }
+
+  window.addEventListener("mouseup", stopPan);
+  window.addEventListener("blur", stopPan);
+})();
+
+
+// ─── minimap ────────────────────────────────────────────────────
+(function minimap() {
+  const W = 200;
+  const H = 150;
+  const box = document.createElement("div");
+  box.id = "minimap";
+  box.title = "点或拖这里移动画布";
+  const canvas = document.createElement("canvas");
+  box.appendChild(canvas);
+  document.body.appendChild(box);
+
+  const ctx = canvas.getContext("2d");
+  let frame = 0;
+  let view = null;
+
+  function fit() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  fit();
+
+  // 卡片包围盒，留点边
+  function bounds() {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    Object.keys(cardEls).forEach(function (id) {
+      const el = cardEls[id];
+      if (!el) return;
+      const x = parseFloat(el.style.left) || 0;
+      const y = parseFloat(el.style.top) || 0;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + (el.offsetWidth || 0));
+      maxY = Math.max(maxY, y + (el.offsetHeight || 0));
+    });
+    if (!isFinite(minX)) return null;
+    const pad = 90;
+    return {
+      x: minX - pad,
+      y: minY - pad,
+      w: maxX - minX + pad * 2,
+      h: maxY - minY + pad * 2,
+    };
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+    const b = bounds();
+    if (!b) {
+      view = null;
       return;
     }
+    const scale = Math.min(W / b.w, H / b.h);
+    const ox = (W - b.w * scale) / 2;
+    const oy = (H - b.h * scale) / 2;
+    view = { scale: scale, ox: ox, oy: oy, b: b };
+
+    const X = function (x) { return ox + (x - b.x) * scale; };
+    const Y = function (y) { return oy + (y - b.y) * scale; };
+
+    ctx.fillStyle = "#2b3440";
+    ctx.strokeStyle = "#414d5d";
+    ctx.lineWidth = 1;
+    Object.keys(cardEls).forEach(function (id) {
+      const el = cardEls[id];
+      if (!el) return;
+      const x = parseFloat(el.style.left) || 0;
+      const y = parseFloat(el.style.top) || 0;
+      const w = Math.max(2, (el.offsetWidth || 0) * scale);
+      const h = Math.max(2, (el.offsetHeight || 0) * scale);
+      ctx.fillRect(X(x), Y(y), w, h);
+      ctx.strokeRect(X(x), Y(y), w, h);
+    });
+
+    // 视口可能比内容还大，裁到 minimap 范围内，否则会画出框外
+    const vx0 = Math.max(0, Math.min(W, X(graph.scrollLeft)));
+    const vy0 = Math.max(0, Math.min(H, Y(graph.scrollTop)));
+    const vx1 = Math.max(0, Math.min(W, X(graph.scrollLeft + graph.clientWidth)));
+    const vy1 = Math.max(0, Math.min(H, Y(graph.scrollTop + graph.clientHeight)));
+    const vw = Math.max(5, vx1 - vx0);
+    const vh = Math.max(5, vy1 - vy0);
+    ctx.fillStyle = "rgba(88,166,255,0.14)";
+    ctx.strokeStyle = "#58a6ff";
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(vx0, vy0, vw, vh);
+    ctx.strokeRect(vx0, vy0, vw, vh);
   }
+
+  function schedule() {
+    if (frame) return;
+    frame = requestAnimationFrame(function () {
+      frame = 0;
+      render();
+    });
+  }
+
+  let dragging = false;
+  function jumpTo(e) {
+    if (!view) return;
+    const rect = canvas.getBoundingClientRect();
+    const worldX = (e.clientX - rect.left - view.ox) / view.scale + view.b.x;
+    const worldY = (e.clientY - rect.top - view.oy) / view.scale + view.b.y;
+    graph.scrollLeft = worldX - graph.clientWidth / 2;
+    graph.scrollTop = worldY - graph.clientHeight / 2;
+    schedule();
+  }
+
+  canvas.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    dragging = true;
+    jumpTo(e);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (dragging) jumpTo(e);
+  });
+  window.addEventListener("mouseup", function () {
+    dragging = false;
+  });
+
+  graph.addEventListener("scroll", schedule);
+  window.addEventListener("resize", function () {
+    fit();
+    schedule();
+  });
+
+  const originalRelayout = relayout;
+  relayout = function () {
+    originalRelayout.apply(null, arguments);
+    schedule();
+  };
+
+  schedule();
 })();

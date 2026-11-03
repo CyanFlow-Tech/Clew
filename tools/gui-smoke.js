@@ -29,6 +29,102 @@ const PROBE = `(() => {
   let classes = 0;
   let methods = 0;
 
+  // 0) 每个入口一个 tab，切进去就要有自己的入口卡片
+  const tabCount = tabs.length;
+  if (tabCount !== Math.min(ENTRIES.length, 12)) {
+    problems.push(["tab 数与入口数不符", String(tabCount), String(ENTRIES.length)]);
+  }
+  for (let i = 0; i < tabs.length; i++) {
+    switchTab(i);
+    const t = tabs[i];
+    if (!t.nodes.length) problems.push(["tab 没有默认卡片", t.label, ""]);
+    if (!cardEls[t.entryId]) problems.push(["tab 缺入口卡片", t.label, ""]);
+    const others = Object.keys(cardEls).filter((k) => k !== t.entryId);
+    if (others.length) {
+      problems.push(["tab 混入了别的入口的卡片", t.label, others.slice(0, 3).join(",")]);
+    }
+  }
+  switchTab(0);
+
+  // 画布要能抓手拖拽：光标对、按住移动会改变滚动位置
+  const canvas = document.getElementById("graph");
+  if (!canvas) {
+    problems.push(["找不到画布", "", ""]);
+  } else {
+    if (getComputedStyle(canvas).cursor !== "grab") {
+      problems.push(["画布没有抓手光标", getComputedStyle(canvas).cursor, ""]);
+    }
+    const beforePan = { left: canvas.scrollLeft, top: canvas.scrollTop };
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 600, clientY: 600, button: 0 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: 480, clientY: 520 }),
+    );
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    const afterPan = { left: canvas.scrollLeft, top: canvas.scrollTop };
+    if (afterPan.left === beforePan.left && afterPan.top === beforePan.top) {
+      problems.push(["拖拽没有移动画布", JSON.stringify(beforePan), JSON.stringify(afterPan)]);
+    }
+
+    // 卡片上的按下要留给点击，不能被平移吃掉
+    const card = canvas.querySelector(".card");
+    if (card) {
+      const left = canvas.scrollLeft;
+      card.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 600, clientY: 600, button: 0 }),
+      );
+      window.dispatchEvent(
+        new MouseEvent("mousemove", { bubbles: true, clientX: 400, clientY: 400 }),
+      );
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      if (canvas.scrollLeft !== left) {
+        problems.push(["卡片上拖动误触了平移", "", ""]);
+      }
+    }
+
+    // 滚动条藏起来了，minimap 必须存在并且能点着移动画布
+    if (getComputedStyle(canvas).scrollbarWidth !== "none") {
+      problems.push(["滚动条没隐藏", getComputedStyle(canvas).scrollbarWidth, ""]);
+    }
+    const mini = document.getElementById("minimap");
+    if (!mini) {
+      problems.push(["缺少 minimap", "", ""]);
+    } else {
+      const mc = mini.querySelector("canvas");
+      if (!mc || !mc.width || !mc.height) {
+        problems.push(["minimap 没画出来", "", ""]);
+      } else {
+        const before = canvas.scrollLeft;
+        const rect = mc.getBoundingClientRect();
+        mc.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            clientX: rect.left + rect.width * 0.85,
+            clientY: rect.top + rect.height * 0.85,
+            button: 0,
+          }),
+        );
+        window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        if (canvas.scrollLeft === before) {
+          problems.push(["点 minimap 没移动画布", String(before), String(canvas.scrollLeft)]);
+        }
+      }
+    }
+  }
+
+  const sel = document.querySelector(".ent-select");
+  if (!sel) {
+    problems.push(["缺少入口下拉", "", ""]);
+  } else {
+    if (sel.options.length !== tabs.length) {
+      problems.push(["下拉项数与入口不符", String(sel.options.length), String(tabs.length)]);
+    }
+    if (Number(sel.value) !== activeTab) {
+      problems.push(["下拉没跟上当前入口", sel.value, String(activeTab)]);
+    }
+  }
+
   // 1) 每个类卡：构造行只出现在被实例化过的类上；目录只收录走过的
   for (const [id, c] of Object.entries(NODES)) {
     cards++;
