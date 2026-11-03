@@ -642,6 +642,100 @@ js += """
 })();
 """
 
+# ── 10. 图数据可重建：打开另一个项目时整份换掉 ────────────────────
+js = patch(
+    js,
+    """const DATA = window.__CLEW__;
+const NODES = DATA.cards, CALLS = DATA.calls, ENTRIES = DATA.entries || [];
+const SUMMARY = 6, CARD_W = 720, COL_GAP = 70, ROW_GAP = 34, HEAD_H = 26;
+
+const FANIN = {};
+Object.keys(CALLS).forEach(function (k) {
+  const c = CALLS[k];
+  if (c.to) FANIN[c.to] = (FANIN[c.to] || 0) + 1;
+});
+""",
+    """let DATA = window.__CLEW__;
+let NODES = DATA.cards, CALLS = DATA.calls, ENTRIES = DATA.entries || [];
+const SUMMARY = 6, CARD_W = 720, COL_GAP = 70, ROW_GAP = 34, HEAD_H = 26;
+
+const FANIN = {};
+function countFanin() {
+  Object.keys(FANIN).forEach(function (k) { delete FANIN[k]; });
+  Object.keys(CALLS).forEach(function (k) {
+    const c = CALLS[k];
+    if (c.to) FANIN[c.to] = (FANIN[c.to] || 0) + 1;
+  });
+}
+countFanin();
+""",
+    "graph data is rebuildable",
+)
+
+js = patch(
+    js,
+    """ENTRIES.slice(0, 12).forEach(function (e) {
+  if (!e || !e.id || !NODES[e.id]) return;
+  tabs.push(blankTab(e));
+});
+
+if (tabs.length) {
+  loadTab(0);
+  roots.add(tabs[0].entryId);
+  expand(tabs[0].entryId);
+  saveTab();
+}
+""",
+    """// 换项目时整份换掉：数据、画布、每个入口的状态全部重建
+function bootProject(data) {
+  DATA = data || {};
+  NODES = DATA.cards || {};
+  CALLS = DATA.calls || {};
+  ENTRIES = DATA.entries || [];
+  countFanin();
+
+  hideBubble();
+  closeFocus();
+  Array.prototype.slice.call(world.children).forEach(function (el) {
+    if (el !== svg) world.removeChild(el);
+  });
+
+  cardEls = {};
+  state = {};
+  openMethods = {};
+  parentOf = {};
+  methodSet = {};
+  roots = new Set();
+  activated = new Set();
+  selectedId = null;
+  selectedRow = null;
+  trail = [];
+  tabs.length = 0;
+  activeTab = -1;
+  if (entrySelect) {
+    entrySelect.remove();
+    entrySelect = null;
+  }
+
+  ENTRIES.slice(0, 12).forEach(function (e) {
+    if (!e || !e.id || !NODES[e.id]) return;
+    tabs.push(blankTab(e));
+  });
+
+  if (tabs.length) {
+    loadTab(0);
+    roots.add(tabs[0].entryId);
+    expand(tabs[0].entryId);
+    saveTab();
+  }
+}
+
+bootProject(DATA);
+""",
+    "bootProject",
+)
+
+js = expect(js, "function bootProject", "bootProject")
 js = expect(js, "function minimap", "minimap")
 (out_dir / "app.js").write_text(js, encoding="utf-8")
 
@@ -699,6 +793,14 @@ loader = """<script>
       s.onerror = function () {
         clewFail("app.js 加载失败");
       };
+      s.onload = function () {
+        const t = document.createElement("script");
+        t.src = "shell.js";
+        t.onerror = function () {
+          clewFail("shell.js 加载失败");
+        };
+        document.body.appendChild(t);
+      };
       document.body.appendChild(s);
     });
   }
@@ -706,7 +808,10 @@ loader = """<script>
   api
     .invoke("boot")
     .then(function (info) {
-      if (info) return clewMount();
+      if (info) {
+        window.__CLEW_PATH__ = info.root;
+        return clewMount();
+      }
       clewPrompt();
     })
     .catch(clewFail);

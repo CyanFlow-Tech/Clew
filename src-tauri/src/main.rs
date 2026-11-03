@@ -39,16 +39,29 @@ struct ProjectInfo {
 
 fn open_at(path: &Path) -> Result<(Index, ProjectInfo), String> {
     let root = std::fs::canonicalize(path).map_err(|e| format!("打不开这个目录：{e}"))?;
-    let db = root.join(".clew").join("index.db");
-    let (conn, project_id) = store::open_index(&db, &root)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| {
-            format!(
-                "还没有索引：{}\n先在终端跑 clew scan {}",
-                root.display(),
-                root.display()
-            )
-        })?;
+    let clew_dir = root.join(".clew");
+    let db = clew_dir.join("index.db");
+
+    // 首次打开一个项目：就地建索引，而不是让人回终端手动跑 scan
+    let (conn, project_id) = match store::open_index(&db, &root).map_err(|e| e.to_string())? {
+        Some(pair) => pair,
+        None => {
+            std::fs::create_dir_all(&clew_dir).map_err(|e| e.to_string())?;
+            let mut fresh = store::open(&db).map_err(|e| e.to_string())?;
+            let stats = clew_core::scan::run::scan(&mut fresh, &root, false)
+                .map_err(|e| format!("建索引失败：{e}"))?;
+            if stats.modules == 0 {
+                // 没有 Python 文件就别留下一个空库，下次还要重来
+                drop(fresh);
+                let _ = std::fs::remove_dir_all(&clew_dir);
+                return Err(format!("{} 里没有 Python 文件", root.display()));
+            }
+            let project_id = repo::project_id_by_path(&fresh, &root.to_string_lossy())
+                .map_err(|e| e.to_string())?
+                .ok_or("建好索引但找不到项目记录")?;
+            (fresh, project_id)
+        }
+    };
 
     let entries = walk::entry_points(&conn, project_id)
         .map_err(|e| e.to_string())?
@@ -155,6 +168,7 @@ fn source_root(state: State<'_, AppState>) -> Result<String, String> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             open_project,

@@ -1,13 +1,17 @@
 
-const DATA = window.__CLEW__;
-const NODES = DATA.cards, CALLS = DATA.calls, ENTRIES = DATA.entries || [];
+let DATA = window.__CLEW__;
+let NODES = DATA.cards, CALLS = DATA.calls, ENTRIES = DATA.entries || [];
 const SUMMARY = 6, CARD_W = 720, COL_GAP = 70, ROW_GAP = 34, HEAD_H = 26;
 
 const FANIN = {};
-Object.keys(CALLS).forEach(function (k) {
-  const c = CALLS[k];
-  if (c.to) FANIN[c.to] = (FANIN[c.to] || 0) + 1;
-});
+function countFanin() {
+  Object.keys(FANIN).forEach(function (k) { delete FANIN[k]; });
+  Object.keys(CALLS).forEach(function (k) {
+    const c = CALLS[k];
+    if (c.to) FANIN[c.to] = (FANIN[c.to] || 0) + 1;
+  });
+}
+countFanin();
 
 const world = document.getElementById("world");
 const svg = document.getElementById("edges");
@@ -712,17 +716,51 @@ function renderTabs() {
   entrySelect.value = String(activeTab < 0 ? 0 : activeTab);
 }
 
-ENTRIES.slice(0, 12).forEach(function (e) {
-  if (!e || !e.id || !NODES[e.id]) return;
-  tabs.push(blankTab(e));
-});
+// 换项目时整份换掉：数据、画布、每个入口的状态全部重建
+function bootProject(data) {
+  DATA = data || {};
+  NODES = DATA.cards || {};
+  CALLS = DATA.calls || {};
+  ENTRIES = DATA.entries || [];
+  countFanin();
 
-if (tabs.length) {
-  loadTab(0);
-  roots.add(tabs[0].entryId);
-  expand(tabs[0].entryId);
-  saveTab();
+  hideBubble();
+  closeFocus();
+  Array.prototype.slice.call(world.children).forEach(function (el) {
+    if (el !== svg) world.removeChild(el);
+  });
+
+  cardEls = {};
+  state = {};
+  openMethods = {};
+  parentOf = {};
+  methodSet = {};
+  roots = new Set();
+  activated = new Set();
+  selectedId = null;
+  selectedRow = null;
+  trail = [];
+  tabs.length = 0;
+  activeTab = -1;
+  if (entrySelect) {
+    entrySelect.remove();
+    entrySelect = null;
+  }
+
+  ENTRIES.slice(0, 12).forEach(function (e) {
+    if (!e || !e.id || !NODES[e.id]) return;
+    tabs.push(blankTab(e));
+  });
+
+  if (tabs.length) {
+    loadTab(0);
+    roots.add(tabs[0].entryId);
+    expand(tabs[0].entryId);
+    saveTab();
+  }
 }
+
+bootProject(DATA);
 
 window.addEventListener("resize", function () { relayout(); });
 graph.addEventListener("scroll", draw);

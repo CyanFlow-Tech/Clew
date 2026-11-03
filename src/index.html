@@ -166,6 +166,14 @@
       s.onerror = function () {
         clewFail("app.js 加载失败");
       };
+      s.onload = function () {
+        const t = document.createElement("script");
+        t.src = "shell.js";
+        t.onerror = function () {
+          clewFail("shell.js 加载失败");
+        };
+        document.body.appendChild(t);
+      };
       document.body.appendChild(s);
     });
   }
@@ -173,7 +181,10 @@
   api
     .invoke("boot")
     .then(function (info) {
-      if (info) return clewMount();
+      if (info) {
+        window.__CLEW_PATH__ = info.root;
+        return clewMount();
+      }
       clewPrompt();
     })
     .catch(clewFail);
