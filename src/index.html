@@ -159,33 +159,36 @@
   }
 
   function clewMount() {
-    return api.invoke("graph").then(function (data) {
-      window.__CLEW__ = data;
-      const s = document.createElement("script");
-      s.src = "app.js";
-      s.onerror = function () {
-        clewFail("app.js 加载失败");
-      };
-      s.onload = function () {
-        const t = document.createElement("script");
-        t.src = "shell.js";
-        t.onerror = function () {
-          clewFail("shell.js 加载失败");
+    // 还没打开项目时后端会拒绝 graph，给一份空图让界面照常起来
+    return api
+      .invoke("graph")
+      .catch(function () {
+        return { cards: {}, calls: {}, entries: [] };
+      })
+      .then(function (data) {
+        window.__CLEW__ = data;
+        const s = document.createElement("script");
+        s.src = "app.js";
+        s.onerror = function () {
+          clewFail("app.js 加载失败");
         };
-        document.body.appendChild(t);
-      };
-      document.body.appendChild(s);
-    });
+        s.onload = function () {
+          const t = document.createElement("script");
+          t.src = "shell.js";
+          t.onerror = function () {
+            clewFail("shell.js 加载失败");
+          };
+          document.body.appendChild(t);
+        };
+        document.body.appendChild(s);
+      });
   }
 
   api
     .invoke("boot")
     .then(function (info) {
-      if (info) {
-        window.__CLEW_PATH__ = info.root;
-        return clewMount();
-      }
-      clewPrompt();
+      if (info) window.__CLEW_PATH__ = info.root;
+      return clewMount();
     })
     .catch(clewFail);
 </script>
