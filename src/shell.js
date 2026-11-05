@@ -3,7 +3,9 @@
 // 图本身仍然由 app.js 负责；这里通过全局 bootProject() 换项目。
 
 (function shell() {
-  const api = window.__TAURI__.core;
+  const api = window.__TAURI__ ? window.__TAURI__.core : null;
+  // 浏览器预览：没有 Tauri，窗口控制与原生对话框都不存在，数据是预先导出的静态 json
+  const desktop = !!api;
   const RECENT_KEY = "clew.recentProjects";
   const VERSION = "0.1.0";
 
@@ -141,6 +143,10 @@
 
     #w-recent{list-style:none;margin:10px 0 0;padding:0;overflow:auto;flex:1;
       scrollbar-width:thin}
+    #w-note{color:#6f737a;font-size:11.5px;padding:10px 12px;margin:8px 0 0;
+      border:1px solid #2b2d30;border-radius:6px;background:#232529;line-height:1.6}
+    #w-note[hidden]{display:none}
+    #w-note.err{color:#f0883e;border-color:#4a3326;background:#2a2118}
     #w-recent li{display:flex;align-items:center;gap:12px;padding:10px;border-radius:8px;
       cursor:pointer}
     #w-recent li:hover{background:#2b2d30}
@@ -259,6 +265,7 @@
         </label>
         <div class="w-actions"><button id="w-open" class="primary">打开</button></div>
       </div>
+      <div id="w-note" hidden></div>
       <ul id="w-recent"></ul>
     </main>`;
   document.body.appendChild(welcome);
@@ -269,6 +276,21 @@
 
   const recentList = welcome.querySelector("#w-recent");
   const queryInput = welcome.querySelector("#w-query");
+  const noteEl = welcome.querySelector("#w-note");
+
+  // 欢迎页自己的提示条：预览模式的说明和打开失败的原因都落在这里，不再只写进被盖住的顶栏
+  function setNote(text, isError) {
+    noteEl.textContent = text || "";
+    noteEl.hidden = !text;
+    noteEl.classList.toggle("err", !!isError);
+  }
+
+  if (!desktop) {
+    setNote(
+      "浏览器预览：图来自 __clew_graph.json（由 clew export 生成）。" +
+        "打开项目、窗口控制、记笔记这类回后端的动作在这里不可用。",
+    );
+  }
 
   function renderRecent() {
     const q = queryInput.value.trim().toLowerCase();
@@ -282,7 +304,9 @@
       li.style.cursor = "default";
       li.textContent = q
         ? "没有匹配的项目"
-        : "还没有项目。点右上角「打开」，选一个 Python 目录（首次打开会自动建索引）。";
+        : desktop
+          ? "还没有项目。点右上角「打开」，选一个 Python 目录（首次打开会自动建索引）。"
+          : "预览模式没有最近项目。换项目请重跑 clew export 后刷新页面。";
       recentList.appendChild(li);
       return;
     }
@@ -363,23 +387,25 @@
   row1.appendChild(projectButton);
   row1.appendChild(menu);
 
-  // 自绘的窗口控制按钮：系统标题栏已经关掉了
-  const winctl = document.createElement("div");
-  winctl.id = "tb-winctl";
-  winctl.innerHTML =
-    '<button class="win-btn" data-win="min" title="最小化">—</button>' +
-    '<button class="win-btn" data-win="max" title="最大化">▢</button>' +
-    '<button class="win-btn close" data-win="close" title="关闭">✕</button>';
-  row1.appendChild(winctl);
+  // 自绘的窗口控制按钮：系统标题栏已经关掉了（浏览器预览里没有窗口可控制）
+  if (desktop) {
+    const winctl = document.createElement("div");
+    winctl.id = "tb-winctl";
+    winctl.innerHTML =
+      '<button class="win-btn" data-win="min" title="最小化">—</button>' +
+      '<button class="win-btn" data-win="max" title="最大化">▢</button>' +
+      '<button class="win-btn close" data-win="close" title="关闭">✕</button>';
+    row1.appendChild(winctl);
 
-  winctl.addEventListener("click", function (e) {
-    const b = e.target.closest("[data-win]");
-    if (!b) return;
-    const w = window.__TAURI__.window.getCurrentWindow();
-    if (b.dataset.win === "min") w.minimize();
-    else if (b.dataset.win === "max") w.toggleMaximize();
-    else w.close();
-  });
+    winctl.addEventListener("click", function (e) {
+      const b = e.target.closest("[data-win]");
+      if (!b) return;
+      const w = window.__TAURI__.window.getCurrentWindow();
+      if (b.dataset.win === "min") w.minimize();
+      else if (b.dataset.win === "max") w.toggleMaximize();
+      else w.close();
+    });
+  }
 
   const row2 = document.createElement("div");
   row2.id = "tb-row2";
@@ -630,6 +656,11 @@
   }
 
   async function openPath(path) {
+    if (!desktop) {
+      setNote("预览模式下不能打开别的项目。换项目请重跑 clew export 后刷新页面。", true);
+      showWelcome();
+      return;
+    }
     setStatus("正在打开（首次会先建索引）…");
     try {
       await api.invoke("open_project", { path: path });
@@ -640,13 +671,19 @@
       renderProjectButton();
       hideWelcome();
       setStatus("");
+      setNote("");
     } catch (err) {
       setStatus(String(err), true);
+      setNote(String(err), true);
       if (typeof tabs !== "undefined" && tabs.length === 0) showWelcome();
     }
   }
 
   async function chooseFolder() {
+    if (!desktop) {
+      setNote("预览模式下没有原生文件对话框。换项目请重跑 clew export 后刷新页面。", true);
+      return;
+    }
     let dir = null;
     try {
       dir = await window.__TAURI__.dialog.open({
@@ -656,6 +693,7 @@
       });
     } catch (err) {
       setStatus(String(err), true);
+      setNote(String(err), true);
       return;
     }
     if (!dir) return;
@@ -663,6 +701,10 @@
   }
 
   function closeProject() {
+    if (!desktop) {
+      setNote("预览模式下只有一份图，关掉就没得看了。重跑 clew export 可以换项目。", true);
+      return;
+    }
     bootProject({});
     currentPath = null;
     renderProjectButton();
@@ -674,7 +716,9 @@
   if (currentPath) remember(currentPath);
   renderProjectButton();
 
-  if (currentPath && typeof tabs !== "undefined" && tabs.length) {
+  // 预览模式没有项目路径，只要图里有入口就直接进画布
+  const hasGraph = typeof tabs !== "undefined" && tabs.length > 0;
+  if ((currentPath || !desktop) && hasGraph) {
     hideWelcome();
   } else {
     showWelcome();

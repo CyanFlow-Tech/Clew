@@ -449,6 +449,7 @@ dependencies = [
  "anyhow",
  "clap",
  "clew-core",
+ "serde_json",
 ]
 
 [[package]]

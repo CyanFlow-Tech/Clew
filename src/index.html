@@ -113,8 +113,10 @@
 <div id="hint">◆ 橙色=精确 · 黄=启发式 · 紫=多态 · 灰=未解析 · ✕ 关闭（引用归零才删） · 类里的方法点开就地展开</div>
 
 <script>
-  // 数据来自索引库：先打开项目，再一次性取出整张图，最后加载界面脚本
-  const api = window.__TAURI__.core;
+  // 数据来自索引库：先打开项目，再一次性取出整张图，最后加载界面脚本。
+  // 没有 __TAURI__ 时进浏览器预览：图从同目录的 __clew_graph.json 读（clew export 生成）。
+  const api = window.__TAURI__ ? window.__TAURI__.core : null;
+  const PREVIEW_DATA = "__clew_graph.json";
 
   function clewFail(msg) {
     document.body.innerHTML =
@@ -129,68 +131,48 @@
     clewFail("promise: " + String((ev.reason && ev.reason.stack) || ev.reason));
   });
 
-  function clewPrompt() {
-    const overlay = document.createElement("div");
-    overlay.style.cssText =
-      "position:fixed;inset:0;background:#14161af2;display:grid;place-items:center;" +
-      "z-index:99;font:14px ui-monospace,Consolas,monospace;color:#d6dae1";
-    overlay.innerHTML =
-      '<div><p>输入已索引的项目路径，回车打开（没索引过先跑 clew scan）：</p>' +
-      '<input id="clew-path" spellcheck="false" style="width:60vw;padding:8px;' +
-      'background:#0f1115;color:#d6dae1;border:1px solid #2a2f38;font:inherit">' +
-      '<p id="clew-err" style="color:#f88;white-space:pre-wrap"></p></div>';
-    document.body.appendChild(overlay);
-
-    const input = overlay.querySelector("#clew-path");
-    const err = overlay.querySelector("#clew-err");
-    input.focus();
-    input.onkeydown = function (ev) {
-      if (ev.key !== "Enter") return;
-      api
-        .invoke("open_project", { path: input.value.trim() })
-        .then(function () {
-          overlay.remove();
-          return clewMount();
-        })
-        .catch(function (e) {
-          err.textContent = String(e);
-        });
-    };
+  function clewGraph() {
+    if (api) {
+      // 还没打开项目时后端会拒绝 graph，给一份空图让界面照常起来
+      return api.invoke("graph").catch(function () {
+        return { cards: {}, calls: {}, entries: [] };
+      });
+    }
+    return fetch(PREVIEW_DATA).then(function (r) {
+      if (!r.ok) throw new Error("读不到 " + PREVIEW_DATA + "，先跑 clew export");
+      return r.json();
+    });
   }
 
   function clewMount() {
-    // 还没打开项目时后端会拒绝 graph，给一份空图让界面照常起来
-    return api
-      .invoke("graph")
-      .catch(function () {
-        return { cards: {}, calls: {}, entries: [] };
-      })
-      .then(function (data) {
-        window.__CLEW__ = data;
-        const s = document.createElement("script");
-        s.src = "app.js";
-        s.onerror = function () {
-          clewFail("app.js 加载失败");
+    return clewGraph().then(function (data) {
+      window.__CLEW__ = data;
+      window.__CLEW_PREVIEW__ = !api;
+      const s = document.createElement("script");
+      s.src = "app.js";
+      s.onerror = function () {
+        clewFail("app.js 加载失败");
+      };
+      s.onload = function () {
+        const t = document.createElement("script");
+        t.src = "shell.js";
+        t.onerror = function () {
+          clewFail("shell.js 加载失败");
         };
-        s.onload = function () {
-          const t = document.createElement("script");
-          t.src = "shell.js";
-          t.onerror = function () {
-            clewFail("shell.js 加载失败");
-          };
-          document.body.appendChild(t);
-        };
-        document.body.appendChild(s);
-      });
+        document.body.appendChild(t);
+      };
+      document.body.appendChild(s);
+    });
   }
 
-  api
-    .invoke("boot")
-    .then(function (info) {
+  function clewBoot() {
+    if (!api) return Promise.resolve(null);
+    return api.invoke("boot").then(function (info) {
       if (info) window.__CLEW_PATH__ = info.root;
-      return clewMount();
-    })
-    .catch(clewFail);
+    });
+  }
+
+  clewBoot().then(clewMount).catch(clewFail);
 </script>
 </body>
 </html>

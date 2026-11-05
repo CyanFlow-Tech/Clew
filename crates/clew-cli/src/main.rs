@@ -64,6 +64,17 @@ enum Command {
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
     },
+    /// Write the whole graph as JSON, for opening the UI in a plain browser
+    Export {
+        /// Project root
+        project: PathBuf,
+        /// Output path; relative paths resolve against the current directory
+        #[arg(long, short)]
+        out: PathBuf,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
 }
 
 fn resolve(root: &Path, db: PathBuf) -> PathBuf {
@@ -214,6 +225,28 @@ fn main() -> anyhow::Result<()> {
             let root = project.canonicalize()?;
             let (conn, project_id) = open_index(&root, db)?;
             walk::run(&conn, project_id, walk::Options { entry })?;
+        }
+        Command::Export { project, out, db } => {
+            use std::io::Write;
+
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let snap = clew_core::snapshot::snapshot(&conn, project_id)?;
+
+            if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir)?;
+            }
+            let mut file = std::io::BufWriter::new(std::fs::File::create(&out)?);
+            serde_json::to_writer(&mut file, &snap)?;
+            file.flush()?;
+            drop(file);
+
+            let bytes = std::fs::metadata(&out)?.len();
+            println!("out        {}", display(&out));
+            println!("cards      {}", snap.cards.len());
+            println!("calls      {}", snap.calls.len());
+            println!("entries    {}", snap.entries.len());
+            println!("size       {} KiB", bytes / 1024);
         }
     }
 
