@@ -15,11 +15,12 @@
     /* 只有第一行是项目色渐变，第二行工具栏保持原色 */
     #top{--tint-a:rgba(79,134,201,.34);--tint-b:rgba(79,134,201,.09);
       background:#0f1216!important;
-      height:72px!important;flex-direction:column!important;align-items:stretch!important;
+      height:78px!important;flex-direction:column!important;align-items:stretch!important;
       gap:0!important;padding:0!important;overflow:visible!important;
       border-bottom:none!important}
 
-    /* 控件平时完全透明，hover 时那块背景才浮出来 */
+    /* 标题栏控件：hover 叠一层半透明白，不换成实色
+       菜单项撑满整行不留圆角，图标和项目按钮保持胶囊 */
     .tb-icon,.tb-menu-item,.tb-project{
       background:transparent;
       border:1px solid transparent;
@@ -33,8 +34,9 @@
       background:rgba(255,255,255,.19);
       border-color:rgba(255,255,255,.12);
     }
-    #graph{inset:72px 0 0 0!important}
-    #tb-row1{display:flex;align-items:center;gap:8px;height:38px;flex:none;
+    #graph{inset:78px 0 0 0!important}
+    #focus{inset:78px 0 0 0!important}
+    #tb-row1{display:flex;align-items:center;gap:8px;height:44px;flex:none;
       padding-left:10px;background:
         linear-gradient(96deg, var(--tint-a) 0%, var(--tint-b) 58%,
           rgba(26,28,32,.92) 100%),
@@ -43,24 +45,31 @@
       padding:0 12px 0 10px;background:#0f1216;
       border-top:1px solid rgba(255,255,255,.05)}
     #tb-winctl{display:flex;align-items:stretch;margin-left:auto;flex:none}
-    .win-btn{width:46px;height:38px;background:none;border:none;color:#9aa0a8;
-      font:inherit;font-size:12px;cursor:pointer;line-height:1}
+    .win-btn{width:46px;height:44px;background:none;border:none;color:#9aa0a8;
+      font:inherit;font-size:12px;cursor:pointer;line-height:1;
+      display:grid;place-items:center}
+    /* 页面里有一条给画布连线用的 svg{position:absolute;inset:0} 全局规则，
+       图标里的 svg 必须显式回到行内盒，否则会飞到视口左上角 */
+    .win-btn svg{position:static;inset:auto;display:block;width:12px;height:12px;
+      pointer-events:none}
     .win-btn:hover{background:rgba(255,255,255,.12);color:#e8eaed}
     .win-btn.close:hover{background:#c42b1c;color:#fff}
     .tb-brand{color:var(--acc);font-weight:600;white-space:nowrap;letter-spacing:.5px;
       display:flex;align-items:center;gap:6px;flex:none}
-    .tb-brand svg{position:static;inset:auto;width:15px;height:15px;pointer-events:none}
-    .tb-icon{color:var(--tx);cursor:pointer;
-      padding:1px 7px;border-radius:4px;font:inherit;line-height:1.5;flex:none}
+    .tb-brand img{width:20px;height:20px;flex:none;display:block;pointer-events:none}
+    .w-brand .tb-brand img{width:28px;height:28px}
+    .tb-icon{color:var(--tx);cursor:pointer;padding:6px 12px;border-radius:4px;font:inherit;font-size:17px;
+      line-height:1;display:flex;align-items:center;flex:none}
     .tb-project{display:flex;align-items:center;gap:8px;color:#dfe1e5;font:inherit;
       padding:3px 10px 3px 4px;border-radius:6px;cursor:pointer;max-width:280px}
     .pj-avatar{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;
       font-size:9px;font-weight:600;color:#fff;flex:none}
     .pj-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .pj-caret{color:#9aa0a8;font-size:10px;flex:none}
+    .pj-caret{color:#9aa0a8;flex:none;display:flex;align-items:center}
+    .pj-caret svg{position:static;inset:auto;display:block;width:12px;height:12px}
 
     /* 项目面板：仿 PyCharm 的宽下拉 */
-    #project-pop{position:fixed;z-index:80;width:380px;max-height:70vh;overflow:auto;
+    #project-pop{position:fixed;z-index:80;width:460px;max-height:70vh;overflow:auto;
       background:#2b2d30;border:1px solid #393b40;border-radius:8px;padding:4px;
       box-shadow:0 16px 40px #000a;scrollbar-width:thin}
     #project-pop[hidden]{display:none}
@@ -69,6 +78,7 @@
       border-radius:5px;cursor:pointer}
     .pp-item:hover{background:#2e436e}
     .pp-item .ico{width:18px;text-align:center;color:#9aa0a8;flex:none}
+    .pp-item .ico svg{position:static;inset:auto;display:block;width:14px;height:14px;margin:0 auto}
     .pp-sep{height:1px;background:#393b40;margin:4px 6px}
     .pp-group{color:#6f737a;font-size:11px;padding:8px 10px 4px;letter-spacing:.3px}
     .pp-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:5px;
@@ -86,16 +96,18 @@
       text-overflow:ellipsis;max-width:34vw;margin-left:auto}
     .tb-status.err{color:#f0883e}
 
-    #tb-menu{display:flex;align-items:center;gap:2px;flex:none}
+    #tb-menu{display:flex;align-items:stretch;gap:0;flex:none}
     #tb-menu[hidden]{display:none}
-    .tb-menu-item{color:var(--tx);font:inherit;cursor:pointer;
-      padding:2px 10px;border-radius:4px}
+    .tb-menu-item{color:var(--tx);cursor:pointer;padding:0 14px;height:44px;border:none;border-radius:0;
+      font:14px/1 "LXGW WenKai Mono","LXGW WenKai",monospace;
+      display:flex;align-items:center;flex:none}
 
-    .tb-pop{position:fixed;top:40px;background:#161b22;border:1px solid var(--bd);
-      border-radius:6px;padding:4px;z-index:60;box-shadow:0 10px 28px #0009;min-width:200px}
+    .tb-pop{position:fixed;top:46px;background:#161b22;border:1px solid var(--bd);
+      border-radius:6px;padding:4px;z-index:96;box-shadow:0 10px 28px #0009;min-width:200px}
     .tb-pop[hidden]{display:none}
     .tb-pop button{display:block;width:100%;text-align:left;background:none;border:none;
-      color:var(--tx);font:inherit;padding:6px 12px;border-radius:4px;cursor:pointer;
+      color:var(--tx);padding:8px 14px;border-radius:4px;cursor:pointer;
+      font:14px/1.2 "LXGW WenKai Mono","LXGW WenKai",monospace;
       white-space:nowrap}
     .tb-pop button:hover{background:#22303f}
     .tb-pop .sep{height:1px;background:var(--bd);margin:4px 6px}
@@ -111,14 +123,25 @@
     #tb-help .close{float:right;cursor:pointer;color:var(--dim)}
 
     /* ── 欢迎页（仿 PyCharm） ─────────────────────────────────── */
-    #welcome{position:fixed;inset:0;z-index:95;display:flex;background:#1e1f22;
-      font-size:13px;color:#dfe1e5}
+    /* 顶部让出标题栏：欢迎页期间窗口按钮必须够得着，不然开错了关不掉 */
+    #welcome{position:fixed;inset:44px 0 0 0;z-index:95;display:flex;background:#1e1f22;
+      font:13px/1.5 "Segoe UI",system-ui,sans-serif;color:#dfe1e5}
     #welcome[hidden]{display:none}
+    body.welcome-open #top{height:44px!important}
+    body.welcome-open #tb-row2{display:none!important}
+    body.welcome-open #project-button{display:none!important}
+    body.welcome-open #tb-burger{display:none!important}
+    body.welcome-open #graph{inset:44px 0 0 0!important}
+    /* 标题栏文字：进项目后是品牌蓝，欢迎页是普通白字的欢迎语 */
+    .tb-brand .tb-title{color:inherit}
+    body.welcome-open .tb-brand .tb-title{color:#dfe1e5;font-weight:400;letter-spacing:0}
     #w-side{width:268px;flex:none;background:#1e1f22;border-right:1px solid #2b2d30;
       padding:16px 10px;display:flex;flex-direction:column;gap:4px}
-    .w-brand{display:flex;align-items:center;gap:10px;padding:4px 10px 16px}
-    .w-brand .t{font-size:14px;font-weight:600;color:#dfe1e5;line-height:1.2}
+    .w-brand{display:flex;align-items:center;gap:12px;padding:4px 10px 18px}
+    .w-brand .t{font-size:15px;font-weight:600;color:#dfe1e5;line-height:1.25}
     .w-brand .v{font-size:11px;color:#6f737a}
+    .w-brand .auth{font-size:11px;color:#6f737a}
+    .w-brand .tb-brand img{width:36px;height:36px}
     .w-nav{display:flex;flex-direction:column;gap:2px}
     .w-nav button{display:flex;align-items:center;gap:8px;background:none;border:none;
       color:#dfe1e5;font:inherit;text-align:left;padding:8px 10px;border-radius:6px;
@@ -135,11 +158,11 @@
       outline:none;padding:4px 0}
     .w-search input::placeholder{color:#6f737a}
     .w-actions{display:flex;gap:8px}
-    .w-actions button{background:#2b2d30;border:1px solid #393b40;color:#dfe1e5;
-      font:inherit;padding:6px 14px;border-radius:6px;cursor:pointer}
-    .w-actions button:hover{background:#35373b;border-color:#4b4e55}
-    .w-actions button.primary{background:#3574f0;border-color:#3574f0;color:#fff}
-    .w-actions button.primary:hover{background:#3f7ff5}
+    /* PyCharm 欢迎页右侧那排按钮：灰底、细边、圆角 6、等高 */
+    .w-actions button{height:34px;padding:0 16px;background:#393b40;border:1px solid #4b4e55;
+      border-radius:6px;color:#dfe1e5;font:inherit;cursor:pointer}
+    .w-actions button:hover{background:#45484c;border-color:#5a5e63}
+    .w-actions button:active{background:#313335}
 
     #w-recent{list-style:none;margin:10px 0 0;padding:0;overflow:auto;flex:1;
       scrollbar-width:thin}
@@ -161,14 +184,28 @@
   document.head.appendChild(style);
 
   // ── 共用小工具 ──────────────────────────────────────────────────
-  const LOGO_SVG =
-    '<svg width="15" height="15" viewBox="0 0 32 32" aria-hidden="true">' +
-    '<path d="M10 6V26M10 16h12" stroke="#6fb2ff" stroke-width="3" fill="none"/>' +
-    '<circle cx="10" cy="6" r="3.5" fill="#6fb2ff"/>' +
-    '<circle cx="10" cy="16" r="3.5" fill="#6fb2ff"/>' +
-    '<circle cx="10" cy="26" r="3.5" fill="#6fb2ff"/>' +
-    '<circle cx="22" cy="16" r="3" fill="none" stroke="#7c8595" stroke-width="2.5"/>' +
-    "</svg>";
+  const LOGO_IMG = '<img src="logo.png" alt="" width="20" height="20">';
+
+  // 全软件唯一一套图标：12 见方、1.5 线宽、圆头圆角、fill none、currentColor。
+  // 窗口按钮照 Windows 标题栏的标准画法，最大化是单框，还原是前后两个错开的框。
+  function icon(body) {
+    return (
+      '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor"' +
+      ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+      body +
+      "</svg>"
+    );
+  }
+
+  const ICON = {
+    min: icon('<path d="M2 6h8"/>'),
+    max: icon('<rect x="2.25" y="2.25" width="7.5" height="7.5"/>'),
+    restore: icon('<path d="M4 4V2.25h5.75V8H8"/><rect x="2.25" y="4" width="5.75" height="5.75"/>'),
+    close: icon('<path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/>'),
+    chevronDown: icon('<path d="M2.75 4.5L6 7.75l3.25-3.25"/>'),
+    folder: icon('<path d="M1.75 3.25h3.1l1.15 1.5h4.25v5.5H1.75z"/>'),
+  };
+
 
   const AVATAR_COLORS = ["#c94f4f", "#4f86c9", "#8f4fc9", "#c9864f", "#4fa87c", "#c94f86"];
 
@@ -253,7 +290,8 @@
     <aside id="w-side">
       <div class="w-brand">
         <span class="tb-brand"></span>
-        <span><span class="t">Clew</span><br><span class="v">${VERSION}</span></span>
+        <span><span class="t">Clew</span><br><span class="v">${VERSION}</span>
+        <br><span class="auth">qingchu4n</span></span>
       </div>
       <nav class="w-nav"><button class="active">项目</button></nav>
       <div class="w-foot">调用图入口在文件菜单里</div>
@@ -263,16 +301,15 @@
         <label class="w-search">
           <input id="w-query" spellcheck="false" placeholder="搜索项目">
         </label>
-        <div class="w-actions"><button id="w-open" class="primary">打开</button></div>
+        <div class="w-actions"><button id="w-open">打开新项目</button></div>
       </div>
       <div id="w-note" hidden></div>
       <ul id="w-recent"></ul>
     </main>`;
   document.body.appendChild(welcome);
-  welcome.querySelector(".w-brand .tb-brand").innerHTML = LOGO_SVG.replace(
-    'width="15" height="15"',
-    'width="28" height="28"',
-  );
+  // 侧栏用同一张位图的放大版，标题栏是 20px，这里 36px 由 CSS 接管
+  welcome.querySelector(".w-brand .tb-brand").innerHTML =
+    '<img src="logo.png" alt="" width="36" height="36">';
 
   const recentList = welcome.querySelector("#w-recent");
   const queryInput = welcome.querySelector("#w-query");
@@ -305,7 +342,7 @@
       li.textContent = q
         ? "没有匹配的项目"
         : desktop
-          ? "还没有项目。点右上角「打开」，选一个 Python 目录（首次打开会自动建索引）。"
+          ? "还没有项目。点右上角「打开新项目」，选一个 Python 目录（首次打开会自动建索引）。"
           : "预览模式没有最近项目。换项目请重跑 clew export 后刷新页面。";
       recentList.appendChild(li);
       return;
@@ -332,11 +369,20 @@
   queryInput.oninput = renderRecent;
   welcome.querySelector("#w-open").onclick = () => chooseFolder();
 
+  // 欢迎页没有项目，就没有菜单可开：左上角只留 logo 和一句欢迎语
+  let brandTitle = null;
   function showWelcome() {
     renderRecent();
+    document.body.classList.add("welcome-open");
+    if (brandTitle) {
+      brandTitle.style.display = "";
+      brandTitle.textContent = "欢迎访问 Clew";
+    }
     welcome.hidden = false;
   }
   function hideWelcome() {
+    document.body.classList.remove("welcome-open");
+    if (brandTitle) brandTitle.style.display = "none";
     welcome.hidden = true;
   }
 
@@ -347,7 +393,8 @@
 
   const brand = document.createElement("span");
   brand.className = "tb-brand";
-  brand.innerHTML = LOGO_SVG + "<span>Clew</span>";
+  brand.innerHTML = LOGO_IMG + '<span class="tb-title">Clew</span>';
+  brandTitle = brand.querySelector(".tb-title");
 
   const burger = document.createElement("button");
   burger.className = "tb-icon";
@@ -359,7 +406,8 @@
   projectButton.className = "tb-project";
   projectButton.id = "project-button";
   projectButton.innerHTML =
-    '<span class="pj-avatar"></span><span class="pj-name"></span><span class="pj-caret">▾</span>';
+    '<span class="pj-avatar"></span><span class="pj-name"></span>' +
+    '<span class="pj-caret">' + ICON.chevronDown + "</span>";
 
   const menu = document.createElement("div");
   menu.id = "tb-menu";
@@ -387,23 +435,38 @@
   row1.appendChild(projectButton);
   row1.appendChild(menu);
 
-  // 自绘的窗口控制按钮：系统标题栏已经关掉了（浏览器预览里没有窗口可控制）
+  // 窗口控制按钮：系统标题栏已经关掉了（浏览器预览里没有窗口可控制）
   if (desktop) {
     const winctl = document.createElement("div");
     winctl.id = "tb-winctl";
     winctl.innerHTML =
-      '<button class="win-btn" data-win="min" title="最小化">—</button>' +
-      '<button class="win-btn" data-win="max" title="最大化">▢</button>' +
-      '<button class="win-btn close" data-win="close" title="关闭">✕</button>';
+      '<button class="win-btn" data-win="min" title="最小化">' + ICON.min + "</button>" +
+      '<button class="win-btn" data-win="max" title="最大化">' + ICON.max + "</button>" +
+      '<button class="win-btn close" data-win="close" title="关闭">' + ICON.close + "</button>";
     row1.appendChild(winctl);
+
+    const win = window.__TAURI__.window.getCurrentWindow();
+    const maxBtn = winctl.querySelector('[data-win="max"]');
+
+    // 最大化与还原是两个形状，跟着窗口状态换
+    async function syncMaxButton() {
+      try {
+        const isMax = await win.isMaximized();
+        maxBtn.innerHTML = isMax ? ICON.restore : ICON.max;
+        maxBtn.title = isMax ? "向下还原" : "最大化";
+      } catch {
+        /* 窗口状态读不到就保持原样 */
+      }
+    }
+    syncMaxButton();
+    win.onResized(syncMaxButton);
 
     winctl.addEventListener("click", function (e) {
       const b = e.target.closest("[data-win]");
       if (!b) return;
-      const w = window.__TAURI__.window.getCurrentWindow();
-      if (b.dataset.win === "min") w.minimize();
-      else if (b.dataset.win === "max") w.toggleMaximize();
-      else w.close();
+      if (b.dataset.win === "min") win.minimize();
+      else if (b.dataset.win === "max") win.toggleMaximize();
+      else win.close();
     });
   }
 
@@ -467,7 +530,7 @@
 
     const openItem = document.createElement("button");
     openItem.className = "pp-item hl";
-    openItem.innerHTML = '<span class="ico">📂</span>打开…';
+    openItem.innerHTML = '<span class="ico">' + ICON.folder + "</span>打开新项目";
     openItem.onclick = () => {
       closeProjectPop();
       chooseFolder();
@@ -479,7 +542,7 @@
     const current = list.find((p) => p.path === currentPath);
     const others = list.filter((p) => p.path !== currentPath);
 
-    projectPop.appendChild(groupLabel("打开项目"));
+    projectPop.appendChild(groupLabel("打开的项目"));
     if (current) {
       projectPop.appendChild(projectRow(current, () => closeProjectPop()));
     } else {
@@ -705,6 +768,7 @@
       setNote("预览模式下只有一份图，关掉就没得看了。重跑 clew export 可以换项目。", true);
       return;
     }
+    setMenuMode(false);
     bootProject({});
     currentPath = null;
     renderProjectButton();
@@ -730,5 +794,16 @@
     closeProject: closeProject,
     setStatus: setStatus,
     setMenuMode: setMenuMode,
+    showWelcome: showWelcome,
+    hideWelcome: hideWelcome,
+    icons: ICON,
   };
 })();
+
+
+
+
+
+
+
+

@@ -23,8 +23,9 @@ $db = Join-Path (Resolve-Path $Project) ".clew\index.db"
 New-Item -ItemType Directory -Force -Path $web | Out-Null
 Copy-Item (Join-Path $repo "src\index.html") $web -Force
 Copy-Item (Join-Path $repo "src\app.js") $web -Force
-if (Test-Path (Join-Path $repo "src\shell.js")) {
-  Copy-Item (Join-Path $repo "src\shell.js") $web -Force
+foreach ($extra in @("shell.js", "logo.png")) {
+  $src = Join-Path $repo "src\$extra"
+  if (Test-Path $src) { Copy-Item $src $web -Force }
 }
 
 if (-not (Test-Path $db)) {
