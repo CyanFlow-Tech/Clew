@@ -614,7 +614,7 @@ function renderTrail() {
 }
 
 // ─── 入口 tab：每个入口一份独立的图 ─────────────────────────────
-const tabs = [];
+const tabs = [];        // 按入口下标稀疏存放，null 表示还没建
 let activeTab = -1;
 
 function blankTab(entry) {
@@ -635,9 +635,26 @@ function blankTab(entry) {
   };
 }
 
+// 入口只登记不预建：真正切到某个入口时才建它的 tab 和卡片
+function ensureTab(i) {
+  const entry = ENTRIES[i];
+  if (!entry || !entry.id || !NODES[entry.id]) return null;
+  if (!tabs[i]) tabs[i] = blankTab(entry);
+  return tabs[i];
+}
+
+function firstEntryIndex() {
+  for (let i = 0; i < ENTRIES.length; i++) {
+    const e = ENTRIES[i];
+    if (e && e.id && NODES[e.id]) return i;
+  }
+  return -1;
+}
+
 function saveTab() {
   if (activeTab < 0) return;
   const t = tabs[activeTab];
+  if (!t) return;
   t.cardEls = cardEls;
   t.state = state;
   t.openMethods = openMethods;
@@ -654,7 +671,8 @@ function saveTab() {
 }
 
 function loadTab(i) {
-  const t = tabs[i];
+  const t = ensureTab(i);
+  if (!t) return;
   cardEls = t.cardEls;
   state = t.state;
   openMethods = t.openMethods;
@@ -683,12 +701,15 @@ function loadTab(i) {
 }
 
 function switchTab(i) {
-  if (i === activeTab || !tabs[i]) return;
+  if (i === activeTab) return;
+  const t = ensureTab(i);
+  if (!t) return;
   saveTab();
   loadTab(i);
-  if (!tabs[i].nodes.length) {
-    roots.add(tabs[i].entryId);
-    expand(tabs[i].entryId);   // 首次进这个 tab：默认显示它的入口卡片
+  if (!t.nodes.length) {
+    // 只有走到这里才去展开这个入口的节点
+    roots.add(t.entryId);
+    expand(t.entryId);
     saveTab();
   }
 }
@@ -701,11 +722,13 @@ function renderTabs() {
     entrySelect = document.createElement("select");
     entrySelect.className = "ent-select";
     entrySelect.title = "选择要看的入口";
-    tabs.forEach(function (t, i) {
+    // 入口全部列进来，不设上限；节点等真正切过去时才建
+    ENTRIES.forEach(function (e, i) {
+      if (!e || !e.id || !NODES[e.id]) return;
       const o = document.createElement("option");
       o.value = String(i);
-      o.textContent = t.label.replace(":<module>", "");
-      o.title = t.label;
+      o.textContent = e.label.replace(":<module>", "");
+      o.title = e.label;
       entrySelect.appendChild(o);
     });
     entrySelect.onchange = function () {
@@ -747,15 +770,12 @@ function bootProject(data) {
     entrySelect = null;
   }
 
-  ENTRIES.slice(0, 12).forEach(function (e) {
-    if (!e || !e.id || !NODES[e.id]) return;
-    tabs.push(blankTab(e));
-  });
-
-  if (tabs.length) {
-    loadTab(0);
-    roots.add(tabs[0].entryId);
-    expand(tabs[0].entryId);
+  // 入口一个都不预建，只把第一个有卡片的入口展开
+  const first = firstEntryIndex();
+  if (first >= 0) {
+    loadTab(first);
+    roots.add(tabs[first].entryId);
+    expand(tabs[first].entryId);
     saveTab();
   }
 }

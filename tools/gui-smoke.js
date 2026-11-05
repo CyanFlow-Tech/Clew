@@ -29,14 +29,20 @@ const PROBE = `(() => {
   let classes = 0;
   let methods = 0;
 
-  // 0) 每个入口一个 tab，切进去就要有自己的入口卡片
-  const tabCount = tabs.length;
-  if (tabCount !== Math.min(ENTRIES.length, 12)) {
-    problems.push(["tab 数与入口数不符", String(tabCount), String(ENTRIES.length)]);
+  // 0) 入口不限量，下拉里每个入口都要有一项；tab 是懒建的，抽查前 12 个
+  const usable = ENTRIES.filter((e) => e && e.id && NODES[e.id]);
+  const options = Array.from(document.querySelectorAll("#entries .ent-select option"));
+  if (options.length !== usable.length) {
+    problems.push(["入口下拉项数与入口数不符", String(options.length), String(usable.length)]);
   }
-  for (let i = 0; i < tabs.length; i++) {
+  const indexes = options.slice(0, 12).map((o) => Number(o.value));
+  for (const i of indexes) {
     switchTab(i);
     const t = tabs[i];
+    if (!t) {
+      problems.push(["切过去之后没有建出 tab", String(i), ""]);
+      continue;
+    }
     if (!t.nodes.length) problems.push(["tab 没有默认卡片", t.label, ""]);
     if (!cardEls[t.entryId]) problems.push(["tab 缺入口卡片", t.label, ""]);
     const others = Object.keys(cardEls).filter((k) => k !== t.entryId);
@@ -44,7 +50,7 @@ const PROBE = `(() => {
       problems.push(["tab 混入了别的入口的卡片", t.label, others.slice(0, 3).join(",")]);
     }
   }
-  switchTab(0);
+  if (indexes.length) switchTab(indexes[0]);
 
   // 画布要能抓手拖拽：光标对、按住移动会改变滚动位置
   const canvas = document.getElementById("graph");
