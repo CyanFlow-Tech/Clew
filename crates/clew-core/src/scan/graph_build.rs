@@ -234,20 +234,30 @@ impl Builder {
 
     /// Source text of `start..end` with the given call spans replaced.
     ///
-    /// Replacements are applied back to front so earlier byte offsets stay valid.
+    /// The spans may nest (`f(g(h()))`), so the text is assembled from the
+    /// original bytes with a cursor instead of edited in place: replacing an
+    /// inner span shortens the string and would leave every enclosing span on
+    /// stale offsets, which panics as soon as the shift lands inside a
+    /// multibyte character.
     fn text_replacing(
         &self,
         start: usize,
         end: usize,
         mut repls: Vec<(usize, usize, String)>,
     ) -> String {
-        let mut out = String::from_utf8_lossy(&self.src[start..end]).to_string();
         repls.sort_by_key(|(s, _, _)| *s);
-        for (s, e, name) in repls.into_iter().rev() {
-            if s >= start && e <= end && e - start <= out.len() {
-                out.replace_range(s - start..e - start, &name);
+        let mut out = String::new();
+        let mut cursor = start;
+        for (s, e, name) in repls {
+            // an inner span covered by one already written out leaves nothing to do
+            if s < cursor || e > end {
+                continue;
             }
+            out.push_str(&String::from_utf8_lossy(&self.src[cursor..s]));
+            out.push_str(&name);
+            cursor = e;
         }
+        out.push_str(&String::from_utf8_lossy(&self.src[cursor..end]));
         out
     }
 

@@ -221,6 +221,65 @@ fn rescan_replaces_rows_instead_of_duplicating() {
 }
 
 #[test]
+fn nested_calls_keep_multibyte_text_intact() {
+    let dir = std::env::temp_dir().join(format!("clew-scan-cn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("app.py"),
+        "def f(*a):\n\
+         \x20   pass\n\
+         \n\
+         \n\
+         def g(a):\n\
+         \x20   pass\n\
+         \n\
+         \n\
+         def h(a):\n\
+         \x20   pass\n\
+         \n\
+         \n\
+         def i():\n\
+         \x20   pass\n\
+         \n\
+         \n\
+         if __name__ == \"__main__\":\n\
+         \x20   f(g(h(i())), \"中文\")\n",
+    )
+    .unwrap();
+    let root = dir.canonicalize().unwrap();
+
+    let db_path = root.join("index.db");
+    let mut conn = open(&db_path).unwrap();
+    let stats = scan(&mut conn, &root, false).unwrap();
+    assert_eq!(stats.entries_main_guard, 1);
+
+    // innermost call first, each nested call lifted into a %N temporary
+    let mut stmt = conn
+        .prepare(
+            "SELECT text FROM card_line l JOIN symbol s ON s.id = l.symbol_id
+              WHERE s.kind = 'module' ORDER BY l.ord",
+        )
+        .unwrap();
+    let lines: Vec<String> = stmt
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(
+        lines,
+        vec![
+            "%0 = i()".to_string(),
+            "%1 = h(%0)".to_string(),
+            "%2 = g(%1)".to_string(),
+            "f(%2, \"中文\")".to_string(),
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn missing_project_reports_nothing() {
     let db = std::env::temp_dir().join(format!("clew-missing-{}.db", std::process::id()));
     let _ = std::fs::remove_file(&db);
