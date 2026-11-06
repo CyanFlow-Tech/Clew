@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use blake3::Hasher;
 use tree_sitter::{Node, Parser};
@@ -123,6 +124,9 @@ pub struct Builder {
     /// card id -> local variable -> raw class name reference
     card_locals: BTreeMap<String, BTreeMap<String, String>>,
     class_ids: BTreeMap<(String, String), String>,
+    /// class qualname -> card id, for the last-resort match in `resolve_class`.
+    /// Scanning `class_ids` per lookup is quadratic on a large project.
+    class_by_qualname: BTreeMap<String, String>,
     /// module -> body lines of its `__main__` guard
     module_cards: BTreeMap<String, Vec<Line>>,
     /// Counter for the `%N` temporaries, unique within one card
@@ -138,29 +142,62 @@ pub fn build(root: &Path) -> anyhow::Result<Built> {
 }
 
 pub fn build_with(root: &Path, include_venv: bool) -> anyhow::Result<Built> {
+    let t_all = Instant::now();
     let root = std::fs::canonicalize(root)?;
+
+    let t_walk = Instant::now();
     let files = walker::collect_with(&root, include_venv);
+    let d_walk = t_walk.elapsed();
 
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_python::LANGUAGE.into())
         .expect("failed to load tree-sitter-python");
 
+    let mut d_read = Duration::ZERO;
+    let mut d_parse = Duration::ZERO;
+    let mut d_emit = Duration::ZERO;
+    let mut bytes = 0usize;
+
     let mut builder = Builder::default();
     for file in &files {
+        let t = Instant::now();
         let Ok(source) = std::fs::read_to_string(&file.path) else {
             continue;
         };
+        bytes += source.len();
+        d_read += t.elapsed();
+
+        let t = Instant::now();
         let tree = match parser.parse(&source, None) {
             Some(t) => t,
             None => continue,
         };
+        d_parse += t.elapsed();
+
         let mut hasher = Hasher::new();
         hasher.update(source.as_bytes());
         let src_hash = hasher.finalize().to_hex().to_string();
+
+        let t = Instant::now();
         builder.file(file, source.as_bytes(), tree.root_node(), src_hash);
+        d_emit += t.elapsed();
     }
+
+    let t = Instant::now();
     builder.resolve();
+    let d_resolve = t.elapsed();
+    eprintln!(
+        "[t] stages files={} bytes={} walk {:.1}ms read {:.1}ms parse {:.1}ms emit {:.1}ms resolve {:.1}ms total {:.1}ms",
+        files.len(),
+        bytes,
+        d_walk.as_secs_f64() * 1000.0,
+        d_read.as_secs_f64() * 1000.0,
+        d_parse.as_secs_f64() * 1000.0,
+        d_emit.as_secs_f64() * 1000.0,
+        d_resolve.as_secs_f64() * 1000.0,
+        t_all.elapsed().as_secs_f64() * 1000.0
+    );
 
     let mut imports = Vec::new();
     for (module, table) in &builder.imports {
@@ -203,6 +240,7 @@ impl Default for Builder {
             class_attrs: BTreeMap::new(),
             card_locals: BTreeMap::new(),
             class_ids: BTreeMap::new(),
+            class_by_qualname: BTreeMap::new(),
             module_cards: BTreeMap::new(),
             temp_counter: 0,
             out_modules: Vec::new(),
@@ -709,6 +747,9 @@ impl Builder {
         });
         self.class_ids
             .insert((self.module.clone(), name.clone()), id.clone());
+        self.class_by_qualname
+            .entry(name.clone())
+            .or_insert_with(|| id.clone());
         self.class_bases
             .insert(id.clone(), (self.module.clone(), bases));
         self.class_attrs.insert(id.clone(), ctor_attrs);
@@ -961,6 +1002,34 @@ impl Builder {
             map
         };
 
+        // Method lookup by name, built once.
+        //
+        // Walking `self.methods` per call site is what made resolution quadratic:
+        // on a 220k-symbol project every `obj.x()` scanned the whole method table.
+        // These two indexes turn each lookup into a single map hit.
+        let (by_module_method, by_method) = {
+            let mut local: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+            let mut global: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for ((module, _class), ms) in &self.methods {
+                for (name, id) in ms {
+                    local
+                        .entry((module.clone(), name.clone()))
+                        .or_default()
+                        .push(id.clone());
+                    global.entry(name.clone()).or_default().push(id.clone());
+                }
+            }
+            for v in local.values_mut() {
+                v.sort();
+                v.dedup();
+            }
+            for v in global.values_mut() {
+                v.sort();
+                v.dedup();
+            }
+            (local, global)
+        };
+
         // local variables -> class cards
         let mut card_locals: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         for (card_id, vars) in self.card_locals.clone() {
@@ -1007,7 +1076,10 @@ impl Builder {
             call.ln = raw.line;
 
             let module = call.from.split(':').next().unwrap_or("").to_string();
-            let card = self.cards.get(&call.from).cloned();
+            // Only the qualname is needed while resolving; cloning the whole card
+            // (with its rendered lines) for every call site is wasted work.
+            let card_qualname: Option<String> =
+                self.cards.get(&call.from).map(|c| c.qualname.clone());
 
             let mut chosen: Option<String> = None;
             let mut conf = Confidence::None;
@@ -1020,36 +1092,41 @@ impl Builder {
             } else {
                 match raw.kind {
                     CallKind::SelfRef => {
-                        if let Some(card) = &card {
-                            if let Some(cls) = class_of_qualname(&card.qualname) {
+                        if let Some(qn) = &card_qualname {
+                            if let Some(cls) = class_of_qualname(qn) {
                                 if let Some(mid) = self
                                     .methods
                                     .get(&(module.clone(), cls.clone()))
                                     .and_then(|m| m.get(&raw.target))
                                 {
-                                    // methods may be overridden in subclasses: expose every candidate
-                                    let mut cands: Vec<String> = self
-                                        .methods
-                                        .iter()
-                                        .filter(|((m, _), _)| m == &module)
-                                        .filter_map(|(_, ms)| ms.get(&raw.target).cloned())
-                                        .collect();
-                                    cands.sort();
-                                    cands.dedup();
+                                    // methods may be overridden in subclasses: expose every candidate.
+                                    // Copy at most MAX_CANDIDATES: a name like `run` is defined
+                                    // thousands of times, and cloning the whole list per call site
+                                    // costs more than the scan it replaced.
+                                    let cands = by_module_method
+                                        .get(&(module.clone(), raw.target.clone()));
                                     chosen = Some(mid.clone());
-                                    if cands.len() > 1 {
-                                        conf = Confidence::Poly;
-                                        candidates = cands;
-                                    } else {
-                                        conf = Confidence::Exact;
+                                    match cands.map(|c| c.len()).unwrap_or(0) {
+                                        n if n > 1 => {
+                                            conf = Confidence::Poly;
+                                            candidates = cands
+                                                .map(|c| {
+                                                    c.iter()
+                                                        .take(MAX_CANDIDATES)
+                                                        .cloned()
+                                                        .collect()
+                                                })
+                                                .unwrap_or_default();
+                                        }
+                                        _ => conf = Confidence::Exact,
                                     }
                                 }
                             }
                         }
                     }
                     CallKind::SelfAttr => {
-                        if let (Some(card), Some(attr)) = (&card, &raw.recv) {
-                            if let Some(cls) = class_of_qualname(&card.qualname) {
+                        if let (Some(qn), Some(attr)) = (&card_qualname, &raw.recv) {
+                            if let Some(cls) = class_of_qualname(qn) {
                                 let cls_id = self
                                     .class_ids
                                     .get(&(module.clone(), cls.clone()))
@@ -1085,20 +1162,16 @@ impl Builder {
                             }
                         }
                         if chosen.is_none() {
-                            let mut cands: Vec<String> = self
-                                .methods
-                                .values()
-                                .filter_map(|m| m.get(&raw.target).cloned())
-                                .collect();
-                            cands.sort();
-                            cands.dedup();
-                            if cands.len() >= 2 {
-                                chosen = Some(cands[0].clone());
-                                candidates = cands;
-                                conf = Confidence::Poly;
-                            } else if cands.len() == 1 {
-                                chosen = Some(cands[0].clone());
-                                conf = Confidence::Heur;
+                            if let Some(list) = by_method.get(&raw.target) {
+                                if list.len() >= 2 {
+                                    chosen = Some(list[0].clone());
+                                    candidates =
+                                        list.iter().take(MAX_CANDIDATES).cloned().collect();
+                                    conf = Confidence::Poly;
+                                } else if list.len() == 1 {
+                                    chosen = Some(list[0].clone());
+                                    conf = Confidence::Heur;
+                                }
                             }
                         }
                     }
@@ -1183,15 +1256,7 @@ impl Builder {
                 }
             }
         }
-        self.class_ids
-            .values()
-            .find(|id| {
-                self.cards
-                    .get(*id)
-                    .map(|c| c.qualname == raw)
-                    .unwrap_or(false)
-            })
-            .cloned()
+        self.class_by_qualname.get(raw).cloned()
     }
 
     fn find_method(&self, class_id: &str, name: &str, depth: usize) -> Option<String> {
@@ -1363,6 +1428,13 @@ fn class_of_qualname(qualname: &str) -> Option<String> {
     parts.pop();
     Some(parts.join("."))
 }
+
+/// How many candidate targets a single call site may carry.
+///
+/// A name like `get` or `run` is defined hundreds or thousands of times in a
+/// large project. Every candidate becomes a row in `call_candidate`, and the
+/// anchor only ever shows a short list, so the tail is dropped.
+const MAX_CANDIDATES: usize = 8;
 
 fn short_name(card_id: &str) -> String {
     card_id

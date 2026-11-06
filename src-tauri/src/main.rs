@@ -4,11 +4,22 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use clew_core::store::{self, Conn, repo};
 use clew_core::walk;
 use serde::Serialize;
 use tauri::State;
+
+/// Process start, so every stage can print an absolute offset from launch.
+static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn since_start_ms() -> f64 {
+    START
+        .get()
+        .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+        .unwrap_or(0.0)
+}
 
 struct Index {
     conn: Conn,
@@ -34,15 +45,20 @@ struct ProjectInfo {
     modules: i64,
     symbols: i64,
     calls: i64,
+    /// Milliseconds from process start to the end of this open, for the perf trace.
+    boot_ms: f64,
     entries: Vec<EntryItem>,
 }
 
 fn open_at(path: &Path) -> Result<(Index, ProjectInfo), String> {
+    let t_open = Instant::now();
     let root = std::fs::canonicalize(path).map_err(|e| format!("打不开这个目录：{e}"))?;
     let clew_dir = root.join(".clew");
     let db = clew_dir.join("index.db");
+    let d_canon = t_open.elapsed();
 
     // 首次打开一个项目：就地建索引，而不是让人回终端手动跑 scan
+    let t_index = Instant::now();
     let (conn, project_id) = match store::open_index(&db, &root).map_err(|e| e.to_string())? {
         Some(pair) => pair,
         None => {
@@ -62,7 +78,9 @@ fn open_at(path: &Path) -> Result<(Index, ProjectInfo), String> {
             (fresh, project_id)
         }
     };
+    let d_index = t_index.elapsed();
 
+    let t_rest = Instant::now();
     let entries = walk::entry_points(&conn, project_id)
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -79,8 +97,19 @@ fn open_at(path: &Path) -> Result<(Index, ProjectInfo), String> {
         modules: repo::count(&conn, "module", project_id).map_err(|e| e.to_string())?,
         symbols: repo::count(&conn, "symbol", project_id).map_err(|e| e.to_string())?,
         calls: repo::count(&conn, "call_site", project_id).map_err(|e| e.to_string())?,
+        boot_ms: since_start_ms(),
         entries,
     };
+    let d_rest = t_rest.elapsed();
+
+    eprintln!(
+        "[t] open_at @{:.0}ms canon {:.1}ms index {:.1}ms entries+counts {:.1}ms total {:.1}ms",
+        info.boot_ms,
+        d_canon.as_secs_f64() * 1000.0,
+        d_index.as_secs_f64() * 1000.0,
+        d_rest.as_secs_f64() * 1000.0,
+        t_open.elapsed().as_secs_f64() * 1000.0
+    );
 
     Ok((Index { conn, root }, info))
 }
@@ -132,6 +161,7 @@ fn code(id: i64, state: State<'_, AppState>) -> Result<Vec<walk::CodeLine>, Stri
 /// The whole graph in one shot, shaped like the prototype's `DATA`.
 #[tauri::command]
 fn graph(state: State<'_, AppState>) -> Result<clew_core::snapshot::Snapshot, String> {
+    let t = Instant::now();
     let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
     let index = guard.as_ref().ok_or("还没有打开项目")?;
     let project_id = clew_core::store::repo::project_id_by_path(
@@ -140,7 +170,16 @@ fn graph(state: State<'_, AppState>) -> Result<clew_core::snapshot::Snapshot, St
     )
     .map_err(|e| e.to_string())?
     .ok_or("项目不在库里")?;
-    clew_core::snapshot::snapshot(&index.conn, project_id).map_err(|e| e.to_string())
+    let snap =
+        clew_core::snapshot::snapshot(&index.conn, project_id).map_err(|e| e.to_string())?;
+    eprintln!(
+        "[t] graph @{:.0}ms took {:.1}ms cards={} calls={}",
+        since_start_ms(),
+        t.elapsed().as_secs_f64() * 1000.0,
+        snap.cards.len(),
+        snap.calls.len()
+    );
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -167,6 +206,8 @@ fn source_root(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 fn main() {
+    START.set(Instant::now()).ok();
+    eprintln!("[t] main starts");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())

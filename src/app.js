@@ -782,6 +782,17 @@ function bootProject(data) {
 
 bootProject(DATA);
 
+// 首卡落进 DOM 之后打点，再等两帧确认已经画出来
+if (window.__CLEW_MARK) {
+  window.__CLEW_MARK("first-card");
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      window.__CLEW_MARK("paint");
+      if (window.__CLEW_REPORT) window.__CLEW_REPORT();
+    });
+  });
+}
+
 window.addEventListener("resize", function () { relayout(); });
 graph.addEventListener("scroll", draw);
 

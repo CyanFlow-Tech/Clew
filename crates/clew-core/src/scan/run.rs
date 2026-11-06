@@ -49,10 +49,15 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
     let mut stats = ScanStats::default();
 
     let root = std::fs::canonicalize(root)?;
-    let built = graph_build::build_with(&root, include_venv)?;
 
+    let t_build = Instant::now();
+    let built = graph_build::build_with(&root, include_venv)?;
+    let d_build = t_build.elapsed();
+
+    let t_db = Instant::now();
     let project_id = repo::upsert_project(conn, &root.to_string_lossy())?;
     repo::clear_project(conn, project_id)?;
+    let d_prepare = t_db.elapsed();
 
     stats.modules = built.modules.len();
     stats.third_party_modules = built.modules.iter().filter(|m| m.is_third_party).count();
@@ -66,6 +71,7 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
     }
 
     // symbols, keyed so card ids can be resolved without touching SQL again
+    let t_syms = Instant::now();
     let mut ids: HashMap<(String, String), i64> = HashMap::new();
     for sym in &built.symbols {
         let tp = *third_party.get(sym.module.as_str()).unwrap_or(&false);
@@ -101,8 +107,10 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
         );
         stats.entries_main_guard += 1;
     }
+    let d_syms = t_syms.elapsed();
 
     // cards: parameters, rendered lines, inferred local types
+    let t_cards = Instant::now();
     for card in built.graph.cards.values() {
         let Some(&sym_id) = ids.get(&(card.module.clone(), card.qualname.clone())) else {
             continue;
@@ -128,8 +136,10 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
             repo::insert_card_line(&tx, sym_id, ord, line)?;
         }
     }
+    let d_cards = t_cards.elapsed();
 
     // call sites: every one of them, resolved or not
+    let t_calls = Instant::now();
     for (cs_id, call) in &built.graph.calls {
         let module = call.from.split_once(':').map(|(m, _)| m).unwrap_or("");
         let owner_id = ids.get(&card_parts(&call.from)).copied();
@@ -161,7 +171,9 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
             stats.call_candidates += 1;
         }
     }
+    let d_calls = t_calls.elapsed();
 
+    let t_misc = Instant::now();
     for imp in &built.imports {
         repo::insert_import(&tx, project_id, imp)?;
         stats.imports += 1;
@@ -194,7 +206,23 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
         }
     }
 
+    let d_misc = t_misc.elapsed();
+
+    let t_commit = Instant::now();
     tx.commit()?;
+    let d_commit = t_commit.elapsed();
+
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    eprintln!(
+        "[t] build {:.1}ms prepare {:.1}ms symbols {:.1}ms cards {:.1}ms calls {:.1}ms misc {:.1}ms commit {:.1}ms",
+        ms(d_build),
+        ms(d_prepare),
+        ms(d_syms),
+        ms(d_cards),
+        ms(d_calls),
+        ms(d_misc),
+        ms(d_commit)
+    );
 
     stats.elapsed_ms = started.elapsed().as_millis();
     Ok(stats)

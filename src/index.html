@@ -118,6 +118,31 @@
   const api = window.__TAURI__ ? window.__TAURI__.core : null;
   const PREVIEW_DATA = "__clew_graph.json";
 
+  // 启动耗时打点。统一收集在 __CLEW_T，最后一次性打到 console。
+  const __CLEW_T = [];
+  function mark(name) {
+    __CLEW_T.push([name, performance.now()]);
+    return performance.now();
+  }
+  mark("script");
+  const tBoot0 = performance.now();
+  window.__CLEW_MARK = mark;
+
+  function clewReport() {
+    const first = __CLEW_T[0][1];
+    const parts = __CLEW_T.map(function (p) {
+      return p[0] + "=" + (p[1] - first).toFixed(1);
+    });
+    const gaps = [];
+    for (let i = 1; i < __CLEW_T.length; i++) {
+      gaps.push(
+        __CLEW_T[i][0] + ":" + (__CLEW_T[i][1] - __CLEW_T[i - 1][1]).toFixed(1)
+      );
+    }
+    console.log("[t] JS " + parts.join(" ") + " | gaps " + gaps.join(" "));
+  }
+  window.__CLEW_REPORT = clewReport;
+
   function clewFail(msg) {
     document.body.innerHTML =
       '<pre style="color:#f88;padding:24px;white-space:pre-wrap">' + msg + "</pre>";
@@ -145,7 +170,9 @@
   }
 
   function clewMount() {
+    const t0 = mark("graph-call");
     return clewGraph().then(function (data) {
+      mark("graph-done");
       window.__CLEW__ = data;
       window.__CLEW_PREVIEW__ = !api;
       const s = document.createElement("script");
@@ -154,11 +181,13 @@
         clewFail("app.js 加载失败");
       };
       s.onload = function () {
+        mark("app-loaded");
         const t = document.createElement("script");
         t.src = "shell.js";
         t.onerror = function () {
           clewFail("shell.js 加载失败");
         };
+        t.onload = function () { mark("shell-loaded"); };
         document.body.appendChild(t);
       };
       document.body.appendChild(s);
@@ -167,7 +196,10 @@
 
   function clewBoot() {
     if (!api) return Promise.resolve(null);
+    const t0 = mark("boot-call");
     return api.invoke("boot").then(function (info) {
+      mark("boot-done");
+      window.__CLEW_BOOT_MS = info && info.boot_ms;
       if (info) window.__CLEW_PATH__ = info.root;
     });
   }
