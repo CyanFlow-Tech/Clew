@@ -291,6 +291,45 @@ fn scan_status(state: State<'_, AppState>) -> Result<ScanStatus, String> {
     })
 }
 
+/// Whether each path still exists. The welcome page marks projects whose
+/// directory was moved or deleted outside Clew.
+#[tauri::command]
+fn check_paths(paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|p| std::path::Path::new(p).exists())
+        .collect()
+}
+
+/// Drop a project's index. The connection is released first, otherwise Windows
+/// keeps the database file open and the directory cannot be removed.
+#[tauri::command]
+fn delete_index(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let dir = Path::new(&path).join(".clew");
+
+    // 目录本身已经不在了，索引跟着一起没了，只剩历史记录要清
+    if !Path::new(&path).exists() {
+        eprintln!("[t] delete_index skipped, missing {}", path);
+        return Ok(());
+    }
+
+    let root = std::fs::canonicalize(Path::new(&path))
+        .map_err(|e| format!("打不开这个目录：{e}"))?;
+
+    {
+        let mut guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+        if guard.as_ref().map(|i| i.root.as_path()) == Some(root.as_path()) {
+            *guard = None;
+        }
+    }
+
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("删不掉索引目录：{e}"))?;
+        eprintln!("[t] delete_index removed {}", dir.display());
+    }
+    Ok(())
+}
+
 /// Open the project given on the command line, if any.
 #[tauri::command]
 fn boot(state: State<'_, AppState>) -> Result<Option<OpenResult>, String> {
@@ -393,6 +432,8 @@ fn main() {
             open_project,
             boot,
             scan_status,
+            delete_index,
+            check_paths,
             node,
             code,
             cards,

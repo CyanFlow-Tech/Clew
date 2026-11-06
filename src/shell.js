@@ -116,7 +116,13 @@
       font:14px/1.2 "LXGW WenKai Mono","LXGW WenKai",monospace;
       white-space:nowrap}
     .tb-pop button:hover{background:#22303f}
+    .tb-pop button:disabled{color:#5c6169;cursor:default}
+    .tb-pop button:disabled:hover{background:none}
     .tb-pop .sep{height:1px;background:var(--bd);margin:4px 6px}
+    .tb-pop .has-sub{display:flex;align-items:center;justify-content:space-between;gap:18px}
+    .tb-pop .has-sub svg{position:static;inset:auto;display:block;width:11px;height:11px;
+      opacity:.7}
+    .tb-pop.sub-pop{z-index:97;top:auto;min-width:180px}
 
     #tb-help{position:fixed;inset:0;z-index:90;display:grid;place-items:center;
       background:#0b0d11cc}
@@ -176,9 +182,48 @@
       border:1px solid #2b2d30;border-radius:6px;background:#232529;line-height:1.6}
     #w-note[hidden]{display:none}
     #w-note.err{color:#f0883e;border-color:#4a3326;background:#2a2118}
-    #w-recent li{display:flex;align-items:center;gap:12px;padding:10px;border-radius:8px;
-      cursor:pointer}
-    #w-recent li:hover{background:#2b2d30}
+    #w-list{overflow:auto;flex:1;scrollbar-width:thin;margin-top:6px}
+    .w-sec + .w-sec{margin-top:4px}
+    #w-recent,#w-hidden{list-style:none;margin:0;padding:0}
+    #w-hidden[hidden]{display:none}
+    .w-sec-h{display:flex;align-items:center;gap:6px;color:#6f737a;font-size:11.5px;
+      padding:8px 10px 6px;letter-spacing:.4px}
+    .w-sec-h.toggle{background:none;border:none;width:100%;text-align:left;
+      cursor:pointer;font:inherit;font-size:11.5px;color:#6f737a;border-radius:6px}
+    .w-sec-h.toggle:hover{color:#dfe1e5}
+    .w-sec-h .chev{display:inline-flex;transition:transform .15s ease}
+    .w-sec-h.open .chev{transform:rotate(90deg)}
+    .w-sec-h .cnt{color:#6f737a}
+    .w-sec-h svg{position:static;inset:auto;display:block;width:11px;height:11px}
+    #w-recent li,#w-hidden li{display:flex;align-items:center;gap:12px;padding:10px;
+      border-radius:8px;cursor:pointer}
+    #w-recent li:hover,#w-hidden li:hover{background:#2b2d30}
+    #w-hidden li{opacity:.75}
+    .w-acts{margin-left:auto;display:flex;align-items:center;gap:2px;flex:none}
+    .w-nameline{display:flex;align-items:center;gap:6px;min-width:0}
+    .w-nameline .w-name{min-width:0}
+    .w-missing{color:#d9a03c;display:inline-flex;flex:none;cursor:help}
+    .w-missing svg{position:static;inset:auto;display:block;width:12px;height:12px}
+    #w-recent li.gone .w-name,#w-hidden li.gone .w-name{color:#9aa1aa}
+    .w-act{width:26px;height:26px;border-radius:6px;border:none;background:none;
+      color:#8b919a;display:grid;place-items:center;cursor:pointer;padding:0;flex:none}
+    .w-act:hover{background:#33363a;color:#e6e8ea}
+    .w-act.danger:hover{background:#3a2626;color:#e06c6c}
+    .w-act svg{position:static;inset:auto;display:block;width:13px;height:13px}
+    #w-confirm{position:fixed;inset:0;z-index:99;display:grid;place-items:center;
+      background:#0b0d11cc}
+    #w-confirm[hidden]{display:none}
+    .cf-card{background:#161b22;border:1px solid var(--bd);border-radius:8px;padding:18px 20px;
+      width:min(440px,86vw);box-shadow:0 18px 40px #0008}
+    .cf-card h3{margin:0 0 8px;font-size:14px;color:#dfe1e5}
+    .cf-card p{margin:0 0 16px;color:#9aa1aa;font-size:12.5px;line-height:1.7;
+      word-break:break-all;white-space:pre-wrap}
+    .cf-actions{display:flex;justify-content:flex-end;gap:8px}
+    .cf-actions button{height:30px;padding:0 14px;border-radius:6px;border:1px solid #33383f;
+      background:#232529;color:#dfe1e5;font:inherit;font-size:12.5px;cursor:pointer}
+    .cf-actions button:hover{background:#2b3037}
+    .cf-actions .danger{border-color:#5a3232;background:#3a2626;color:#f0a5a5}
+    .cf-actions .danger:hover{background:#4a2d2d}
     .w-avatar{width:34px;height:34px;flex:none;border-radius:8px;display:grid;
       place-items:center;font-size:12px;font-weight:600;color:#fff;letter-spacing:.5px}
     .w-meta{min-width:0}
@@ -209,7 +254,24 @@
     restore: icon('<path d="M4 4V2.25h5.75V8H8"/><rect x="2.25" y="4" width="5.75" height="5.75"/>'),
     close: icon('<path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/>'),
     chevronDown: icon('<path d="M2.75 4.5L6 7.75l3.25-3.25"/>'),
+    chevronRight: icon('<path d="M4.5 2.75L7.75 6 4.5 9.25"/>'),
     folder: icon('<path d="M1.75 3.25h3.1l1.15 1.5h4.25v5.5H1.75z"/>'),
+    eye: icon(
+      '<path d="M1.4 6S3.1 3.2 6 3.2 10.6 6 10.6 6 8.9 8.8 6 8.8 1.4 6 1.4 6z"/>' +
+        '<circle cx="6" cy="6" r="1.35"/>',
+    ),
+    eyeOff: icon(
+      '<path d="M1.4 6S3.1 3.2 6 3.2 10.6 6 10.6 6 8.9 8.8 6 8.8 1.4 6 1.4 6z"/>' +
+        '<path d="M2.3 2.3l7.4 7.4"/>',
+    ),
+    trash: icon(
+      '<path d="M2.2 3.4h7.6"/><path d="M4.6 3.4V2.3h2.8v1.1"/>' +
+        '<path d="M3.3 3.4l.5 6.1h4.4l.5-6.1"/>',
+    ),
+    warn: icon(
+      '<path d="M6 1.9L11.1 10.2H0.9L6 1.9z"/><path d="M6 4.7v2.3"/>' +
+        '<circle cx="6" cy="8.6" r="0.45"/>',
+    ),
   };
 
 
@@ -273,7 +335,7 @@
     }
     const seen = new Set();
     return list
-      .map((p) => ({ path: normPath(p.path), name: p.name }))
+      .map((p) => ({ path: normPath(p.path), name: p.name, hidden: !!p.hidden }))
       .filter((p) => {
         if (!p.path || seen.has(p.path)) return false;
         seen.add(p.path);
@@ -281,12 +343,41 @@
       });
   }
 
+  function saveRecent(list) {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 200)));
+  }
+
   function remember(path) {
     const clean = normPath(path);
     if (!clean) return;
-    const list = recent().filter((p) => p.path !== clean);
-    list.unshift({ path: clean, name: basename(clean) });
-    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 20)));
+    const list = recent();
+    const prev = list.find((p) => p.path === clean);
+    const rest = list.filter((p) => p.path !== clean);
+    rest.unshift({ path: clean, name: basename(clean), hidden: prev ? prev.hidden : false });
+
+    // 可见项目最多二十条，隐藏的不占这个额度
+    let visible = 0;
+    const kept = [];
+    for (const p of rest) {
+      if (p.hidden) {
+        kept.push(p);
+        continue;
+      }
+      if (visible >= 20) continue;
+      visible++;
+      kept.push(p);
+    }
+    saveRecent(kept);
+  }
+
+  function setHidden(path, hidden) {
+    const clean = normPath(path);
+    saveRecent(recent().map((p) => (p.path === clean ? { ...p, hidden } : p)));
+  }
+
+  function forget(path) {
+    const clean = normPath(path);
+    saveRecent(recent().filter((p) => p.path !== clean));
   }
 
   // ── 欢迎页 ──────────────────────────────────────────────────────
@@ -310,7 +401,20 @@
         <div class="w-actions"><button id="w-open">打开新项目</button></div>
       </div>
       <div id="w-note" hidden></div>
-      <ul id="w-recent"></ul>
+      <div id="w-list">
+        <section class="w-sec">
+          <div class="w-sec-h">最近项目</div>
+          <ul id="w-recent"></ul>
+        </section>
+        <section class="w-sec" id="w-hidden-sec" hidden>
+          <button class="w-sec-h toggle" id="w-hidden-toggle" type="button">
+            <span class="chev">${ICON.chevronRight}</span>
+            <span>隐藏项目</span>
+            <span class="cnt" id="w-hidden-cnt"></span>
+          </button>
+          <ul id="w-hidden" hidden></ul>
+        </section>
+      </div>
     </main>`;
   document.body.appendChild(welcome);
   // 侧栏用同一张位图的放大版，标题栏是 20px，这里 36px 由 CSS 接管
@@ -318,8 +422,20 @@
     '<img src="logo.png" alt="" width="36" height="36">';
 
   const recentList = welcome.querySelector("#w-recent");
+  const hiddenSec = welcome.querySelector("#w-hidden-sec");
+  const hiddenList = welcome.querySelector("#w-hidden");
+  const hiddenToggle = welcome.querySelector("#w-hidden-toggle");
+  const hiddenCnt = welcome.querySelector("#w-hidden-cnt");
   const queryInput = welcome.querySelector("#w-query");
   const noteEl = welcome.querySelector("#w-note");
+
+  // 隐藏区默认折叠，展开状态记在一次会话里，不写进本地存储
+  let hiddenOpen = false;
+  hiddenToggle.onclick = function () {
+    hiddenOpen = !hiddenOpen;
+    hiddenToggle.classList.toggle("open", hiddenOpen);
+    hiddenList.hidden = !hiddenOpen;
+  };
 
   // 欢迎页自己的提示条：预览模式的说明和打开失败的原因都落在这里，不再只写进被盖住的顶栏
   function setNote(text, isError) {
@@ -335,42 +451,216 @@
     );
   }
 
-  function renderRecent() {
-    const q = queryInput.value.trim().toLowerCase();
-    const list = recent().filter(
-      (p) => !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q),
-    );
-    recentList.innerHTML = "";
-    if (!list.length) {
-      const li = document.createElement("li");
-      li.className = "w-hint";
-      li.style.cursor = "default";
-      li.textContent = q
-        ? "没有匹配的项目"
-        : desktop
-          ? "还没有项目。点右上角「打开新项目」，选一个 Python 目录（首次打开会自动建索引）。"
-          : "预览模式没有最近项目。换项目请重跑 clew export 后刷新页面。";
-      recentList.appendChild(li);
+  // 目录存在性：进欢迎页时批量查一次，删掉记录后再查一次
+  let missing = {};
+
+  async function refreshMissing() {
+    if (!desktop) {
+      missing = {};
       return;
     }
-    for (const p of list) {
-      const li = document.createElement("li");
-      const meta = document.createElement("div");
-      meta.className = "w-meta";
-      const name = document.createElement("div");
-      name.className = "w-name";
-      name.textContent = p.name;
-      const path = document.createElement("div");
-      path.className = "w-path";
-      path.textContent = p.path;
-      meta.appendChild(name);
-      meta.appendChild(path);
-      li.appendChild(avatar(p.name, "w-avatar"));
-      li.appendChild(meta);
-      li.onclick = () => openPath(p.path);
-      recentList.appendChild(li);
+    const list = recent();
+    if (!list.length) {
+      missing = {};
+      return;
+    }
+    try {
+      const flags = await api.invoke("check_paths", { paths: list.map((p) => p.path) });
+      const next = {};
+      list.forEach((p, i) => {
+        if (!flags[i]) next[p.path] = true;
+      });
+      missing = next;
+    } catch (err) {
+      missing = {};
     }
   }
+
+  // 一行项目：头像、名字路径、右侧两个动作。动作区自己吃掉点击，
+  // 免得点眼睛或垃圾桶的时候把项目打开。
+  function welcomeRow(p) {
+    const li = document.createElement("li");
+    li.appendChild(avatar(p.name, "w-avatar"));
+
+    const meta = document.createElement("div");
+    meta.className = "w-meta";
+    const nameline = document.createElement("div");
+    nameline.className = "w-nameline";
+    const name = document.createElement("div");
+    name.className = "w-name";
+    name.textContent = p.name;
+    nameline.appendChild(name);
+
+    // 目录被外部删掉的记录，名字后面挂一个感叹号，鼠标停上去说明原因
+    const gone = !!missing[p.path];
+    if (gone) {
+      li.classList.add("gone");
+      const badge = document.createElement("span");
+      badge.className = "w-missing";
+      badge.title = "路径不存在：" + p.path;
+      badge.innerHTML = ICON.warn;
+      nameline.appendChild(badge);
+    }
+
+    const path = document.createElement("div");
+    path.className = "w-path";
+    path.textContent = p.path;
+    meta.appendChild(nameline);
+    meta.appendChild(path);
+    li.appendChild(meta);
+
+    const acts = document.createElement("div");
+    acts.className = "w-acts";
+    acts.onclick = (e) => e.stopPropagation();
+
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "w-act";
+    eye.title = p.hidden ? "恢复显示" : "隐藏";
+    eye.innerHTML = p.hidden ? ICON.eye : ICON.eyeOff;
+    eye.onclick = function (e) {
+      e.stopPropagation();
+      setHidden(p.path, !p.hidden);
+      renderRecent();
+      setNote(
+        p.hidden ? p.name + " 已恢复显示" : p.name + " 已隐藏，可在下方隐藏项目里恢复",
+        false,
+      );
+    };
+    acts.appendChild(eye);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "w-act danger";
+    del.title = "删除项目";
+    del.innerHTML = ICON.trash;
+    del.onclick = function (e) {
+      e.stopPropagation();
+      askDelete(p);
+    };
+    acts.appendChild(del);
+    li.appendChild(acts);
+
+    // 目录不存在时点击只给清理入口；隐藏的项目先要求恢复可见
+    if (gone) {
+      li.onclick = () => askDelete(p, true);
+    } else if (p.hidden) {
+      li.onclick = () => setNote("「" + p.name + "」已隐藏，先点眼睛图标恢复显示再打开", true);
+    } else {
+      li.onclick = () => openPath(p.path);
+    }
+    return li;
+  }
+
+  function hintRow(text) {
+    const li = document.createElement("li");
+    li.className = "w-hint";
+    li.style.cursor = "default";
+    li.textContent = text;
+    return li;
+  }
+
+  function renderRecent() {
+    const q = queryInput.value.trim().toLowerCase();
+    const match = (p) =>
+      !q || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q);
+    const all = recent();
+    const visible = all.filter((p) => !p.hidden && match(p));
+    const hidden = all.filter((p) => p.hidden && match(p));
+
+    recentList.innerHTML = "";
+    if (!visible.length) {
+      recentList.appendChild(
+        hintRow(
+          q
+            ? "没有匹配的项目"
+            : desktop
+              ? "还没有项目。点右上角「打开新项目」，选一个 Python 目录（首次打开会自动建索引）。"
+              : "预览模式没有最近项目。换项目请重跑 clew export 后刷新页面。",
+        ),
+      );
+    }
+    for (const p of visible) recentList.appendChild(welcomeRow(p));
+
+    hiddenSec.hidden = hidden.length === 0;
+    hiddenCnt.textContent = hidden.length ? "（" + hidden.length + "）" : "";
+    hiddenList.innerHTML = "";
+    for (const p of hidden) hiddenList.appendChild(welcomeRow(p));
+    if (!hidden.length) hiddenOpen = false;
+    hiddenList.hidden = !hiddenOpen;
+    hiddenToggle.classList.toggle("open", hiddenOpen);
+  }
+
+  // ── 删除项目确认 ────────────────────────────────────────────────
+  const confirmLayer = document.createElement("div");
+  confirmLayer.id = "w-confirm";
+  confirmLayer.hidden = true;
+  confirmLayer.innerHTML =
+    '<div class="cf-card">' +
+    '<h3 id="cf-title"></h3>' +
+    '<p id="cf-body"></p>' +
+    '<div class="cf-actions">' +
+    '<button id="cf-cancel" type="button">取消</button>' +
+    '<button id="cf-ok" class="danger" type="button">删除</button>' +
+    "</div></div>";
+  welcome.appendChild(confirmLayer);
+
+  const cfTitle = confirmLayer.querySelector("#cf-title");
+  const cfBody = confirmLayer.querySelector("#cf-body");
+  const cfOk = confirmLayer.querySelector("#cf-ok");
+  const cfCancel = confirmLayer.querySelector("#cf-cancel");
+  let pendingDelete = null;
+
+  function closeConfirm() {
+    confirmLayer.hidden = true;
+    pendingDelete = null;
+  }
+
+  function askDelete(p, missingDir) {
+    pendingDelete = p;
+    if (missingDir) {
+      cfTitle.textContent = "目录不存在";
+      cfBody.textContent =
+        p.path + "\n\n这个目录已经不在了，建议把这条记录从最近项目里删掉。";
+      cfOk.textContent = "删除记录";
+    } else {
+      cfTitle.textContent = "删除项目「" + p.name + "」";
+      cfBody.textContent =
+        "会删除 " + p.path + "\\.clew 索引目录，并把它从最近项目里移除。项目源码不受影响。";
+      cfOk.textContent = "删除";
+    }
+    confirmLayer.hidden = false;
+  }
+
+  cfCancel.onclick = closeConfirm;
+  confirmLayer.onclick = function (e) {
+    if (e.target === confirmLayer) closeConfirm();
+  };
+  cfOk.onclick = async function () {
+    const item = pendingDelete;
+    closeConfirm();
+    if (!item) return;
+    try {
+      // 目录已经不在时后端会直接跳过删除，历史记录在这边清掉就行
+      if (desktop) await api.invoke("delete_index", { path: item.path });
+    } catch (err) {
+      setNote(String(err), true);
+      return;
+    }
+    if (currentPath === item.path) closeProject();
+    forget(item.path);
+    renderRecent();
+    if (desktop) {
+      refreshMissing().then(function () {
+        if (!welcome.hidden) renderRecent();
+      });
+    }
+    setNote("「" + item.name + "」已删除，索引一并清除", false);
+  };
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !confirmLayer.hidden) closeConfirm();
+  });
 
   queryInput.oninput = renderRecent;
   welcome.querySelector("#w-open").onclick = () => chooseFolder();
@@ -379,6 +669,10 @@
   let brandTitle = null;
   function showWelcome() {
     renderRecent();
+    // 目录可能在外面被删掉了，查完再画一遍，给缺目录的行挂上标记
+    refreshMissing().then(function () {
+      if (!welcome.hidden) renderRecent();
+    });
     document.body.classList.add("welcome-open");
     if (brandTitle) {
       brandTitle.style.display = "";
@@ -616,9 +910,48 @@
   pop.hidden = true;
   document.body.appendChild(pop);
 
+  // 右侧子菜单：项目列表用它展开，跟主下拉分开一层
+  const subPop = document.createElement("div");
+  subPop.className = "tb-pop sub-pop";
+  subPop.hidden = true;
+  document.body.appendChild(subPop);
+
+  function closeSub() {
+    subPop.hidden = true;
+    subPop.innerHTML = "";
+  }
+
   function closePop() {
+    closeSub();
     pop.hidden = true;
     for (const b of menu.children) b.classList.remove("open");
+  }
+
+  function openSub(anchor, items) {
+    subPop.innerHTML = "";
+    for (const item of items) {
+      if (item === "-") {
+        const s = document.createElement("div");
+        s.className = "sep";
+        subPop.appendChild(s);
+        continue;
+      }
+      const b = document.createElement("button");
+      b.textContent = item.label;
+      if (item.disabled) b.disabled = true;
+      if (item.title) b.title = item.title;
+      b.onclick = function (e) {
+        e.stopPropagation();
+        if (item.disabled) return;
+        closePop();
+        item.run();
+      };
+      subPop.appendChild(b);
+    }
+    const r = anchor.getBoundingClientRect();
+    subPop.style.left = Math.round(r.right + 4) + "px";
+    subPop.style.top = Math.round(r.top) + "px";
+    subPop.hidden = false;
   }
 
   function popAt(anchor, items) {
@@ -632,15 +965,29 @@
       }
       const b = document.createElement("button");
       b.textContent = item.label;
-      b.onclick = function () {
-        closePop();
-        item.run();
-      };
+      if (item.sub) {
+        b.classList.add("has-sub");
+        const arrow = document.createElement("span");
+        arrow.innerHTML = ICON.chevronRight;
+        b.appendChild(arrow);
+        b.onmouseenter = function () { openSub(b, item.sub()); };
+        b.onclick = function (e) {
+          e.stopPropagation();
+          openSub(b, item.sub());
+        };
+      } else {
+        if (item.disabled) b.disabled = true;
+        b.onclick = function () {
+          closePop();
+          item.run();
+        };
+      }
       pop.appendChild(b);
     }
     const r = anchor.getBoundingClientRect();
     pop.style.left = Math.round(r.left) + "px";
-    pop.hidden = false;  }
+    pop.hidden = false;
+  }
 
   // ── 菜单栏模式 ──────────────────────────────────────────────────
   let menuMode = false;
@@ -659,7 +1006,8 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
-    if (!projectPop.hidden) closeProjectPop();
+    if (!subPop.hidden) closeSub();
+    else if (!projectPop.hidden) closeProjectPop();
     else if (!pop.hidden) closePop();
     else if (menuMode) setMenuMode(false);
   });
@@ -675,7 +1023,9 @@
       ) {
         closeProjectPop();
       }
-      if (!pop.hidden && !pop.contains(e.target)) closePop();
+      if (!pop.hidden && !pop.contains(e.target) && !subPop.contains(e.target)) {
+        closePop();
+      }
       if (menuMode && !row1.contains(e.target) && !pop.contains(e.target)) {
         setMenuMode(false);
       }
@@ -708,13 +1058,40 @@
     if (item.dataset.menu === "file") {
       popAt(item, [
         { label: "打开项目…", run: chooseFolder },
+        { label: "项目列表", sub: projectListItems },
+        "-",
         { label: "关闭项目", run: closeProject },
+        "-",
+        { label: "重建索引", run: rebuildIndex },
+        { label: "删除索引", run: removeIndex },
       ]);
     } else {
       closePop();
       help.hidden = false;
     }
   });
+
+  // 项目列表子菜单：固定显示前几个，其余折成一行省略号，最后是管理入口
+  const SUB_MENU_MAX = 8;
+  function projectListItems() {
+    const list = recent()
+      .filter((p) => !p.hidden)
+      .filter((p) => p.path !== currentPath);
+    const items = list.slice(0, SUB_MENU_MAX).map((p) => ({
+      label: p.name,
+      run: () => openPath(p.path),
+    }));
+    if (list.length > SUB_MENU_MAX) {
+      items.push({
+        label: "…还有 " + (list.length - SUB_MENU_MAX) + " 个",
+        disabled: true,
+      });
+    }
+    if (!items.length) items.push({ label: "没有其他项目", disabled: true });
+    items.push("-");
+    items.push({ label: "管理项目", disabled: true, title: "稍后提供" });
+    return items;
+  }
 
   // ── 项目操作 ────────────────────────────────────────────────────
   let currentPath = window.__CLEW_PATH__ ? normPath(window.__CLEW_PATH__) : null;
@@ -806,6 +1183,8 @@
   function enterProject(path) {
     currentPath = normPath(path);
     remember(path);
+    // 主动打开的项目不该继续留在隐藏区
+    setHidden(path, false);
     renderProjectButton();
     hideWelcome();
     setNote("");
@@ -835,6 +1214,45 @@
       setNote(String(err), true);
       if (typeof tabs !== "undefined" && tabs.length === 0) showWelcome();
     }
+  }
+
+  // 重建索引：删掉旧库再走一次第一次打开的流程，后台扫描照旧走进度条
+  async function rebuildIndex() {
+    if (!desktop || !currentPath) return;
+    if (scanTimer) {
+      setStatus("索引还在建立，等它完成再重建", true);
+      return;
+    }
+    const path = currentPath;
+    try {
+      await api.invoke("delete_index", { path: path });
+    } catch (err) {
+      setStatus(String(err), true);
+      return;
+    }
+    bootProject([]);
+    setMenuMode(false);
+    await openPath(path);
+  }
+
+  // 删除索引：库没了就不能留在项目里，回到欢迎页等下次重建
+  async function removeIndex() {
+    if (!desktop || !currentPath) return;
+    if (scanTimer) {
+      setStatus("索引还在建立，等它完成再删除", true);
+      return;
+    }
+    const path = currentPath;
+    const name = basename(path);
+    try {
+      await api.invoke("delete_index", { path: path });
+    } catch (err) {
+      setStatus(String(err), true);
+      return;
+    }
+    setMenuMode(false);
+    closeProject();
+    setNote("「" + name + "」的索引已删除，下次打开会重新建立", false);
   }
 
   async function chooseFolder() {
