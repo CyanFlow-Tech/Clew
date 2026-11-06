@@ -95,6 +95,12 @@
     .tb-status{color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;
       text-overflow:ellipsis;max-width:34vw;margin-left:auto}
     .tb-status.err{color:#f0883e}
+    .tb-status.busy{display:flex;align-items:center;gap:8px;max-width:46vw;margin-left:auto}
+    .tb-prog{width:110px;height:6px;border-radius:3px;background:#2b3038;overflow:hidden;flex:none}
+    .tb-prog i{display:block;height:100%;background:var(--acc);width:0;
+      transition:width .25s ease}
+    .tb-prog-t{color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis}
 
     #tb-menu{display:flex;align-items:stretch;gap:0;flex:none}
     #tb-menu[hidden]{display:none}
@@ -714,8 +720,95 @@
   let currentPath = window.__CLEW_PATH__ ? normPath(window.__CLEW_PATH__) : null;
 
   function setStatus(text, isError) {
+    status.classList.remove("busy");
     status.textContent = text || "";
     status.classList.toggle("err", !!isError);
+  }
+
+  // 建索引时状态栏换成进度条，估算时间做一次指数平滑，免得数字跳来跳去
+  let scanTimer = null;
+  let smoothEta = 0;
+
+  function fmtEta(ms) {
+    if (!ms || ms < 800) return "即将完成";
+    const s = Math.round(ms / 1000);
+    if (s < 60) return "还剩 " + s + " 秒";
+    const m = Math.floor(s / 60);
+    const rest = s % 60;
+    return "还剩 " + m + " 分" + (rest ? " " + rest + " 秒" : "");
+  }
+
+  function showProgress(fraction, text) {
+    const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    status.classList.remove("err");
+    status.classList.add("busy");
+    let bar = status.querySelector(".tb-prog i");
+    if (!bar) {
+      status.innerHTML = '<span class="tb-prog"><i></i></span><span class="tb-prog-t"></span>';
+      bar = status.querySelector(".tb-prog i");
+    }
+    bar.style.width = pct + "%";
+    status.querySelector(".tb-prog-t").textContent = text;
+  }
+
+  function stopScanWatch() {
+    if (scanTimer) {
+      clearInterval(scanTimer);
+      scanTimer = null;
+    }
+    smoothEta = 0;
+  }
+
+  // 打开项目后立刻进界面，索引在后头建，这里只负责把进度画出来
+  function watchScan(path) {
+    stopScanWatch();
+    showProgress(0, "准备建索引…");
+    scanTimer = setInterval(async function () {
+      let s = null;
+      try {
+        s = await api.invoke("scan_status");
+      } catch (err) {
+        return;
+      }
+      if (!s) return;
+
+      if (s.state === "failed") {
+        stopScanWatch();
+        setStatus(s.error || "建索引失败", true);
+        setNote(s.error || "建索引失败", true);
+        return;
+      }
+      if (s.state === "ready") {
+        stopScanWatch();
+        setStatus("正在载入…");
+        try {
+          const info = await api.invoke("open_project", { path: path });
+          await bootProject(info && info.entries);
+          setStatus("");
+          setNote("");
+        } catch (err) {
+          setStatus(String(err), true);
+        }
+        return;
+      }
+
+      const eta = s.eta_ms > 0 ? s.eta_ms : 0;
+      if (eta) smoothEta = smoothEta > 0 ? smoothEta * 0.7 + eta * 0.3 : eta;
+      const pct = Math.round((s.fraction || 0) * 100);
+      const tail = smoothEta ? " · " + fmtEta(smoothEta) : " · 估算中";
+      showProgress(
+        s.fraction || 0,
+        (s.phase || "建索引") + " " + pct + "%" + tail
+      );
+    }, 400);
+  }
+
+  function enterProject(path) {
+    currentPath = normPath(path);
+    remember(path);
+    renderProjectButton();
+    hideWelcome();
+    setNote("");
   }
 
   async function openPath(path) {
@@ -724,17 +817,19 @@
       showWelcome();
       return;
     }
-    setStatus("正在打开（首次会先建索引）…");
+    stopScanWatch();
+    setStatus("正在打开…");
     try {
-      await api.invoke("open_project", { path: path });
-      const data = await api.invoke("graph");
-      bootProject(data);
-      currentPath = normPath(path);
-      remember(path);
-      renderProjectButton();
-      hideWelcome();
+      const info = await api.invoke("open_project", { path: path });
+      // 首次打开：先进项目，索引在后台建，进度画在状态栏
+      if (info && info.state === "indexing") {
+        enterProject(path);
+        watchScan(path);
+        return;
+      }
       setStatus("");
-      setNote("");
+      enterProject(path);
+      await bootProject(info && info.entries);
     } catch (err) {
       setStatus(String(err), true);
       setNote(String(err), true);
@@ -768,8 +863,9 @@
       setNote("预览模式下只有一份图，关掉就没得看了。重跑 clew export 可以换项目。", true);
       return;
     }
+    stopScanWatch();
     setMenuMode(false);
-    bootProject({});
+    bootProject([]);
     currentPath = null;
     renderProjectButton();
     setStatus("");
@@ -780,12 +876,19 @@
   if (currentPath) remember(currentPath);
   renderProjectButton();
 
-  // 预览模式没有项目路径，只要图里有入口就直接进画布
-  const hasGraph = typeof tabs !== "undefined" && tabs.length > 0;
-  if ((currentPath || !desktop) && hasGraph) {
+  // 命令行带进来的项目若还没索引，一样先进界面再等索引
+  const bootInfo = window.__CLEW_BOOT_INFO__;
+  if (bootInfo && bootInfo.state === "indexing") {
     hideWelcome();
+    watchScan(bootInfo.root);
   } else {
-    showWelcome();
+    // 预览模式没有项目路径，只要图里有入口就直接进画布
+    const hasGraph = typeof ENTRIES !== "undefined" && ENTRIES.length > 0;
+    if ((currentPath || !desktop) && hasGraph) {
+      hideWelcome();
+    } else {
+      showWelcome();
+    }
   }
 
   window.clewShell = {

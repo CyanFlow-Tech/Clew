@@ -157,23 +157,24 @@
   });
 
   function clewGraph() {
-    if (api) {
-      // 还没打开项目时后端会拒绝 graph，给一份空图让界面照常起来
-      return api.invoke("graph").catch(function () {
-        return { cards: {}, calls: {}, entries: [] };
-      });
-    }
     return fetch(PREVIEW_DATA).then(function (r) {
       if (!r.ok) throw new Error("读不到 " + PREVIEW_DATA + "，先跑 clew export");
       return r.json();
     });
   }
 
-  function clewMount() {
-    const t0 = mark("graph-call");
-    return clewGraph().then(function (data) {
-      mark("graph-done");
-      window.__CLEW__ = data;
+  function clewMount(entries) {
+    // 桌面模式不再整图传输：入口列表交给 app.js，卡片按展开动作逐个取。
+    // 浏览器预览没有后端，仍旧读一份导出的 JSON。
+    const ready = api
+      ? Promise.resolve()
+      : clewGraph().then(function (data) {
+          mark("graph-done");
+          window.__CLEW__ = data;
+          window.__CLEW_PREVIEW__ = true;
+        });
+    return ready.then(function () {
+      window.__CLEW_ENTRIES__ = entries || [];
       window.__CLEW_PREVIEW__ = !api;
       const s = document.createElement("script");
       s.src = "app.js";
@@ -196,15 +197,19 @@
 
   function clewBoot() {
     if (!api) return Promise.resolve(null);
-    const t0 = mark("boot-call");
+    mark("boot-call");
     return api.invoke("boot").then(function (info) {
       mark("boot-done");
       window.__CLEW_BOOT_MS = info && info.boot_ms;
+      window.__CLEW_BOOT_INFO__ = info;
       if (info) window.__CLEW_PATH__ = info.root;
+      return info;
     });
   }
 
-  clewBoot().then(clewMount).catch(clewFail);
+  clewBoot()
+    .then(function (info) { return clewMount(info && info.entries); })
+    .catch(clewFail);
 </script>
 </body>
 </html>

@@ -1,9 +1,15 @@
 
-let DATA = window.__CLEW__;
-let NODES = DATA.cards, CALLS = DATA.calls, ENTRIES = DATA.entries || [];
+let DATA = window.__CLEW__ || {};
+let NODES = DATA.cards || {}, CALLS = DATA.calls || {}, ENTRIES = DATA.entries || window.__CLEW_ENTRIES__ || [];
 const SUMMARY = 6, CARD_W = 720, COL_GAP = 70, ROW_GAP = 34, HEAD_H = 26;
 
+// 桌面模式下数据按需取：点开一个节点才向后端要它的卡片与出边。
+// 浏览器预览读的是一份完整 JSON，这时 LAZY 为假，行为与以前一致。
+const desktopApi = window.__TAURI__ ? window.__TAURI__.core : null;
+const LAZY = !window.__CLEW__ && !!desktopApi;
+
 const FANIN = {};
+const REFS = {};   // 未加载的卡也知道 module / qualname，候选列表才显示得出名字
 function countFanin() {
   Object.keys(FANIN).forEach(function (k) { delete FANIN[k]; });
   Object.keys(CALLS).forEach(function (k) {
@@ -11,7 +17,42 @@ function countFanin() {
     if (c.to) FANIN[c.to] = (FANIN[c.to] || 0) + 1;
   });
 }
-countFanin();
+
+// 后端随每批卡片带回全项目的被调次数，比在已加载的子图里数更准
+function mergeFanin(map) {
+  Object.keys(map || {}).forEach(function (k) { FANIN[k] = map[k]; });
+}
+
+const inflight = {};
+function ensure(ids) {
+  if (!LAZY) return Promise.resolve();
+  const want = [];
+  const waits = [];
+  ids.forEach(function (id) {
+    if (!id || NODES[id]) return;
+    if (inflight[id]) { waits.push(inflight[id]); return; }
+    if (want.indexOf(id) === -1) want.push(id);
+  });
+  if (want.length) {
+    const p = desktopApi.invoke("cards", { ids: want }).then(function (payload) {
+      const cards = payload.cards || {};
+      const calls = payload.calls || {};
+      const refs = payload.refs || {};
+      Object.keys(cards).forEach(function (k) { NODES[k] = cards[k]; });
+      Object.keys(calls).forEach(function (k) { CALLS[k] = calls[k]; });
+      Object.keys(refs).forEach(function (k) { REFS[k] = refs[k]; });
+      mergeFanin(payload.fanin);
+    });
+    want.forEach(function (id) { inflight[id] = p; });
+    p.catch(function (err) {
+      console.error("取卡片失败", err);
+    }).then(function () {
+      want.forEach(function (id) { delete inflight[id]; });
+    });
+    waits.push(p);
+  }
+  return Promise.all(waits);
+}
 
 const world = document.getElementById("world");
 const svg = document.getElementById("edges");
@@ -78,9 +119,25 @@ function renderLine(ln, host, ownerId) {
     a.textContent = "◆" + cnt;
     if (selectedCs === ln.cs) a.className += " on";
     a.title = "展开并显示这一跳的实参绑定";
-    a.onmouseenter = function (ev) { showBubble(ln.cs, ev); };
+    a.onmouseenter = function (ev) {
+      showBubble(ln.cs, ev);
+      if (c.to && !NODES[c.to]) {
+        // 形参在目标卡里，取回来再把气泡画一遍
+        ensure([c.to]).then(function () {
+          if (hoverCs === ln.cs) showBubble(ln.cs, ev);
+        });
+      }
+    };
     a.onmouseleave = hideBubble;
-    a.onclick = function (ev) { ev.stopPropagation(); hideBubble(); selectedCs = ln.cs; if (ownerId && cardEls[ownerId]) { renderCard(ownerId); relayout(); } expand(c.to, c.from, ln.cs); };
+    a.onclick = function (ev) {
+      ev.stopPropagation();
+      hideBubble();
+      selectedCs = ln.cs;
+      ensure(c.to ? [c.to] : []).then(function () {
+        if (ownerId && cardEls[ownerId]) { renderCard(ownerId); relayout(); }
+        expand(c.to, c.from, ln.cs);
+      });
+    };
     row.appendChild(a);
   } else if (c) {
     const a = document.createElement("span");
@@ -278,8 +335,12 @@ function placeCard(id, parentHint) {
   requestAnimationFrame(function () { el.style.transition = ""; });
 }
 
-function expand(id, parentHint, viaCs) {
-  if (!NODES[id]) return;
+async function expand(id, parentHint, viaCs) {
+  if (!id) return;
+  if (!NODES[id]) {
+    await ensure([id]);
+    if (!NODES[id]) return;
+  }
   if (viaCs) activated.add(viaCs);
 
   // 方法落地时，它的类卡要同时在图上：类目录和函数卡片一起出现，
@@ -501,6 +562,7 @@ function draw() {
 }
 
 // ─── 气泡 ───────────────────────────────────────────────────────
+let hoverCs = null;
 function argRows(cs) {
   const c = CALLS[cs];
   const params = NODES[c.to] ? NODES[c.to].params : [];
@@ -517,6 +579,7 @@ function confNote(c) {
   return "精确匹配（同模块 / import / 类型推断 / self. 方法）";
 }
 function showBubble(cs, ev) {
+  hoverCs = cs;
   const c = CALLS[cs];
   bubble.innerHTML = "";
   const hdr = document.createElement("div");
@@ -530,10 +593,11 @@ function showBubble(cs, ev) {
     const list = document.createElement("div");
     list.style.marginTop = "5px";
     c.candidates.forEach(function (cid, i) {
-      if (!NODES[cid]) return;
+      const ref = NODES[cid] || REFS[cid];
+      if (!ref) return;
       const row = document.createElement("div");
       row.style.cssText = "padding:2px 4px;border-radius:3px;cursor:pointer;color:var(--acc)";
-      row.textContent = (i + 1) + ". " + NODES[cid].module + " · " + NODES[cid].qualname;
+      row.textContent = (i + 1) + ". " + ref.module + " · " + ref.qualname;
       row.onmouseenter = function () { row.style.background = "#2d333b"; };
       row.onmouseleave = function () { row.style.background = "transparent"; };
       row.onclick = function () { hideBubble(); expand(cid, c.from, cs); };
@@ -550,7 +614,7 @@ function showBubble(cs, ev) {
   bubble.style.left = Math.min(ev.clientX + 14, window.innerWidth - 480) + "px";
   bubble.style.top = Math.min(ev.clientY + 14, window.innerHeight - 40 - bubble.offsetHeight) + "px";
 }
-function hideBubble() { bubble.style.display = "none"; }
+function hideBubble() { hoverCs = null; bubble.style.display = "none"; }
 
 // ─── 聚焦 / 选中 / 路径条 ───────────────────────────────────────
 function openFocus(id) {
@@ -638,7 +702,7 @@ function blankTab(entry) {
 // 入口只登记不预建：真正切到某个入口时才建它的 tab 和卡片
 function ensureTab(i) {
   const entry = ENTRIES[i];
-  if (!entry || !entry.id || !NODES[entry.id]) return null;
+  if (!entry || !entry.id) return null;
   if (!tabs[i]) tabs[i] = blankTab(entry);
   return tabs[i];
 }
@@ -646,7 +710,7 @@ function ensureTab(i) {
 function firstEntryIndex() {
   for (let i = 0; i < ENTRIES.length; i++) {
     const e = ENTRIES[i];
-    if (e && e.id && NODES[e.id]) return i;
+    if (e && e.id) return i;
   }
   return -1;
 }
@@ -700,7 +764,7 @@ function loadTab(i) {
   relayout();
 }
 
-function switchTab(i) {
+async function switchTab(i) {
   if (i === activeTab) return;
   const t = ensureTab(i);
   if (!t) return;
@@ -709,7 +773,7 @@ function switchTab(i) {
   if (!t.nodes.length) {
     // 只有走到这里才去展开这个入口的节点
     roots.add(t.entryId);
-    expand(t.entryId);
+    await expand(t.entryId);
     saveTab();
   }
 }
@@ -724,7 +788,7 @@ function renderTabs() {
     entrySelect.title = "选择要看的入口";
     // 入口全部列进来，不设上限；节点等真正切过去时才建
     ENTRIES.forEach(function (e, i) {
-      if (!e || !e.id || !NODES[e.id]) return;
+      if (!e || !e.id) return;
       const o = document.createElement("option");
       o.value = String(i);
       o.textContent = e.label.replace(":<module>", "");
@@ -740,12 +804,12 @@ function renderTabs() {
 }
 
 // 换项目时整份换掉：数据、画布、每个入口的状态全部重建
-function bootProject(data) {
-  DATA = data || {};
-  NODES = DATA.cards || {};
-  CALLS = DATA.calls || {};
-  ENTRIES = DATA.entries || [];
-  countFanin();
+async function bootProject(entries) {
+  ENTRIES = entries || [];
+  // 预览模式的数据是整份 JSON，按需模式从空图开始，点开谁取谁
+  NODES = LAZY ? {} : DATA.cards || {};
+  CALLS = LAZY ? {} : DATA.calls || {};
+  if (!LAZY) countFanin();
 
   hideBubble();
   closeFocus();
@@ -770,28 +834,28 @@ function bootProject(data) {
     entrySelect = null;
   }
 
-  // 入口一个都不预建，只把第一个有卡片的入口展开
+  // 入口一个都不预建，只把第一个入口展开
   const first = firstEntryIndex();
   if (first >= 0) {
     loadTab(first);
     roots.add(tabs[first].entryId);
-    expand(tabs[first].entryId);
+    await expand(tabs[first].entryId);
     saveTab();
+  }
+  if (window.__CLEW_MARK) {
+    window.__CLEW_MARK("first-card");
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        window.__CLEW_MARK("paint");
+        if (window.__CLEW_REPORT) window.__CLEW_REPORT();
+      });
+    });
   }
 }
 
-bootProject(DATA);
-
-// 首卡落进 DOM 之后打点，再等两帧确认已经画出来
-if (window.__CLEW_MARK) {
-  window.__CLEW_MARK("first-card");
-  requestAnimationFrame(function () {
-    requestAnimationFrame(function () {
-      window.__CLEW_MARK("paint");
-      if (window.__CLEW_REPORT) window.__CLEW_REPORT();
-    });
-  });
-}
+bootProject(ENTRIES).catch(function (err) {
+  console.error("启动失败", err);
+});
 
 window.addEventListener("resize", function () { relayout(); });
 graph.addEventListener("scroll", draw);

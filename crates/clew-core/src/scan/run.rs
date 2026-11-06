@@ -11,6 +11,7 @@ use rusqlite::Connection;
 use super::entry::{self, MODULE_ENTRY_QUALNAME};
 use super::graph_build::{self, SymbolMeta};
 use super::model::{Confidence, SymbolKind};
+use super::progress::weight;
 use crate::store::repo;
 
 #[derive(Debug, Default)]
@@ -45,19 +46,32 @@ fn card_parts(card_id: &str) -> (String, String) {
 }
 
 pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::Result<ScanStats> {
+    scan_with(conn, root, include_venv, &mut |_, _, _, _| {})
+}
+
+/// Same as [`scan`], but reports coarse progress for a UI progress bar.
+pub fn scan_with(
+    conn: &mut Connection,
+    root: &Path,
+    include_venv: bool,
+    report: &mut dyn FnMut(&'static str, u64, u64, f32),
+) -> anyhow::Result<ScanStats> {
     let started = Instant::now();
     let mut stats = ScanStats::default();
 
+    report("枚举文件", 0, 0, weight::WALK.0);
     let root = std::fs::canonicalize(root)?;
 
     let t_build = Instant::now();
-    let built = graph_build::build_with(&root, include_venv)?;
+    let built = graph_build::build_with(&root, include_venv, report)?;
     let d_build = t_build.elapsed();
 
     let t_db = Instant::now();
     let project_id = repo::upsert_project(conn, &root.to_string_lossy())?;
-    repo::clear_project(conn, project_id)?;
+    let repo_clear = repo::clear_project(conn, project_id);
     let d_prepare = t_db.elapsed();
+    repo_clear?;
+    report("准备写入", 0, 1, weight::SYMBOLS.0);
 
     stats.modules = built.modules.len();
     stats.third_party_modules = built.modules.iter().filter(|m| m.is_third_party).count();
@@ -108,6 +122,7 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
         stats.entries_main_guard += 1;
     }
     let d_syms = t_syms.elapsed();
+    report("写入符号", 1, 1, weight::SYMBOLS.1);
 
     // cards: parameters, rendered lines, inferred local types
     let t_cards = Instant::now();
@@ -137,6 +152,7 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
         }
     }
     let d_cards = t_cards.elapsed();
+    report("写入卡片", 1, 1, weight::CARDS.1);
 
     // call sites: every one of them, resolved or not
     let t_calls = Instant::now();
@@ -172,6 +188,7 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
         }
     }
     let d_calls = t_calls.elapsed();
+    report("写入调用", 1, 1, weight::CALLS.1);
 
     let t_misc = Instant::now();
     for imp in &built.imports {
@@ -207,10 +224,13 @@ pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::R
     }
 
     let d_misc = t_misc.elapsed();
+    report("写入其他表", 1, 1, weight::MISC.1);
 
+    report("提交", 0, 1, weight::COMMIT.0);
     let t_commit = Instant::now();
     tx.commit()?;
     let d_commit = t_commit.elapsed();
+    report("完成", 1, 1, 1.0);
 
     let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
     eprintln!(

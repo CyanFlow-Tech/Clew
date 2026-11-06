@@ -3,9 +3,12 @@
 //! Tauri shell: the frontend reads the index through these commands only.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use clew_core::scan::progress::Progress;
+use clew_core::snapshot::{self, CardsPayload, Entry};
 use clew_core::store::{self, Conn, repo};
 use clew_core::walk;
 use serde::Serialize;
@@ -26,73 +29,79 @@ struct Index {
     root: PathBuf,
 }
 
+/// A background scan started when a project is opened for the first time.
+struct ScanJob {
+    root: PathBuf,
+    started: Instant,
+    progress: Arc<Mutex<Progress>>,
+    finished: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
+}
+
 #[derive(Default)]
 struct AppState {
     index: Mutex<Option<Index>>,
+    scan: Mutex<Option<Arc<ScanJob>>>,
 }
 
+/// One answer to "open this project": either the index is ready, or a scan is
+/// running and the caller should poll `scan_status`.
 #[derive(Serialize)]
-struct EntryItem {
-    id: i64,
-    module: String,
-    qualname: String,
-    confidence: String,
-}
-
-#[derive(Serialize)]
-struct ProjectInfo {
+struct OpenResult {
+    /// `ready` or `indexing`
+    state: &'static str,
     root: String,
     modules: i64,
     symbols: i64,
     calls: i64,
     /// Milliseconds from process start to the end of this open, for the perf trace.
     boot_ms: f64,
-    entries: Vec<EntryItem>,
+    /// Card ids of the entry points, shaped like the snapshot's entries.
+    entries: Vec<Entry>,
 }
 
-fn open_at(path: &Path) -> Result<(Index, ProjectInfo), String> {
+#[derive(Serialize)]
+struct ScanStatus {
+    /// `idle`, `indexing`, `ready` or `failed`
+    state: &'static str,
+    phase: String,
+    done: u64,
+    total: u64,
+    fraction: f32,
+    elapsed_ms: f64,
+    /// 0 when the fraction is still too small to project from
+    eta_ms: f64,
+    error: Option<String>,
+}
+
+/// Open an already-built index. Never scans: a missing index is the caller's cue
+/// to start a background scan and let the UI open straight away.
+fn open_ready(path: &Path) -> Result<(Index, OpenResult), String> {
     let t_open = Instant::now();
     let root = std::fs::canonicalize(path).map_err(|e| format!("打不开这个目录：{e}"))?;
-    let clew_dir = root.join(".clew");
-    let db = clew_dir.join("index.db");
-    let d_canon = t_open.elapsed();
+    let db = root.join(".clew").join("index.db");
 
-    // 首次打开一个项目：就地建索引，而不是让人回终端手动跑 scan
     let t_index = Instant::now();
-    let (conn, project_id) = match store::open_index(&db, &root).map_err(|e| e.to_string())? {
-        Some(pair) => pair,
-        None => {
-            std::fs::create_dir_all(&clew_dir).map_err(|e| e.to_string())?;
-            let mut fresh = store::open(&db).map_err(|e| e.to_string())?;
-            let stats = clew_core::scan::run::scan(&mut fresh, &root, false)
-                .map_err(|e| format!("建索引失败：{e}"))?;
-            if stats.modules == 0 {
-                // 没有 Python 文件就别留下一个空库，下次还要重来
-                drop(fresh);
-                let _ = std::fs::remove_dir_all(&clew_dir);
-                return Err(format!("{} 里没有 Python 文件", root.display()));
-            }
-            let project_id = repo::project_id_by_path(&fresh, &root.to_string_lossy())
-                .map_err(|e| e.to_string())?
-                .ok_or("建好索引但找不到项目记录")?;
-            (fresh, project_id)
-        }
-    };
+    let (conn, project_id) = store::open_index(&db, &root)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{} 还没有索引", root.display()))?;
     let d_index = t_index.elapsed();
 
     let t_rest = Instant::now();
-    let entries = walk::entry_points(&conn, project_id)
+    let entries: Vec<Entry> = walk::entry_points(&conn, project_id)
         .map_err(|e| e.to_string())?
         .into_iter()
-        .map(|(id, module, qualname, confidence)| EntryItem {
-            id,
-            module,
-            qualname,
-            confidence,
+        .map(|(_id, module, qualname, _confidence)| {
+            let card = format!("{module}:{qualname}");
+            Entry {
+                id: card.clone(),
+                label: card,
+            }
         })
         .collect();
 
-    let info = ProjectInfo {
+    let info = OpenResult {
+        state: "ready",
         root: root.display().to_string(),
         modules: repo::count(&conn, "module", project_id).map_err(|e| e.to_string())?,
         symbols: repo::count(&conn, "symbol", project_id).map_err(|e| e.to_string())?,
@@ -103,9 +112,8 @@ fn open_at(path: &Path) -> Result<(Index, ProjectInfo), String> {
     let d_rest = t_rest.elapsed();
 
     eprintln!(
-        "[t] open_at @{:.0}ms canon {:.1}ms index {:.1}ms entries+counts {:.1}ms total {:.1}ms",
+        "[t] open_at @{:.0}ms index {:.1}ms entries+counts {:.1}ms total {:.1}ms",
         info.boot_ms,
-        d_canon.as_secs_f64() * 1000.0,
         d_index.as_secs_f64() * 1000.0,
         d_rest.as_secs_f64() * 1000.0,
         t_open.elapsed().as_secs_f64() * 1000.0
@@ -119,27 +127,177 @@ fn remember(state: &State<'_, AppState>, index: Index) -> Result<(), String> {
     Ok(())
 }
 
-/// Open an already-scanned project and describe it.
+/// Kick off a scan on a worker thread and return the handle the UI polls.
+fn spawn_scan(root: PathBuf) -> Arc<ScanJob> {
+    let progress = Arc::new(Mutex::new(Progress::default()));
+    let finished = Arc::new(AtomicBool::new(false));
+    let error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let job = Arc::new(ScanJob {
+        root: root.clone(),
+        started: Instant::now(),
+        progress: progress.clone(),
+        finished: finished.clone(),
+        error: error.clone(),
+    });
+
+    std::thread::spawn(move || {
+        let clew_dir = root.join(".clew");
+        let db = clew_dir.join("index.db");
+        let result = (|| -> Result<(), String> {
+            std::fs::create_dir_all(&clew_dir).map_err(|e| e.to_string())?;
+            let mut conn = store::open(&db).map_err(|e| e.to_string())?;
+            let stats = clew_core::scan::run::scan_with(
+                &mut conn,
+                &root,
+                false,
+                &mut |phase, done, total, fraction| {
+                    if let Ok(mut p) = progress.lock() {
+                        *p = Progress {
+                            phase,
+                            done,
+                            total,
+                            fraction,
+                        };
+                    }
+                },
+            )
+            .map_err(|e| format!("建索引失败：{e}"))?;
+            if stats.modules == 0 {
+                drop(conn);
+                let _ = std::fs::remove_dir_all(&clew_dir);
+                return Err(format!("{} 里没有 Python 文件", root.display()));
+            }
+            eprintln!(
+                "[t] scan @{:.0}ms done in {:.1}s",
+                since_start_ms(),
+                stats.elapsed_ms as f64 / 1000.0
+            );
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {}
+            Err(msg) => {
+                *error.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+            }
+        }
+        finished.store(true, Ordering::SeqCst);
+    });
+
+    job
+}
+
+/// Open a project. A first-open returns `indexing` at once and scans in the
+/// background, so the window can show its own UI instead of freezing.
 #[tauri::command]
-fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectInfo, String> {
-    let (index, info) = open_at(Path::new(&path))?;
-    remember(&state, index)?;
-    Ok(info)
+fn open_project(path: String, state: State<'_, AppState>) -> Result<OpenResult, String> {
+    let root = std::fs::canonicalize(Path::new(&path))
+        .map_err(|e| format!("打不开这个目录：{e}"))?;
+    let db = root.join(".clew").join("index.db");
+
+    // 索引能用就直接开。只判断库文件在不在是不够的：中断的扫描会留下一个
+    // 空库，那样会把「没有索引」误报成有索引。
+    if matches!(store::open_index(&db, &root), Ok(Some(_))) {
+        let (index, info) = open_ready(&root)?;
+        remember(&state, index)?;
+        return Ok(info);
+    }
+
+    // a scan for this same directory may already be running
+    {
+        let guard = state.scan.lock().map_err(|_| "内部状态损坏".to_string())?;
+        if let Some(job) = guard.as_ref() {
+            if job.root == root && !job.finished.load(Ordering::SeqCst) {
+                return Ok(OpenResult {
+                    state: "indexing",
+                    root: root.display().to_string(),
+                    modules: 0,
+                    symbols: 0,
+                    calls: 0,
+                    boot_ms: since_start_ms(),
+                    entries: Vec::new(),
+                });
+            }
+        }
+    }
+
+    // 残留的库没有可用索引，删掉重建，免得 scan 在半个库上继续写
+    if root.join(".clew").exists() {
+        let _ = std::fs::remove_dir_all(root.join(".clew"));
+    }
+
+    let job = spawn_scan(root.clone());
+    *state.scan.lock().map_err(|_| "内部状态损坏".to_string())? = Some(job);
+    eprintln!("[t] open_project @{:.0}ms started a background scan", since_start_ms());
+
+    Ok(OpenResult {
+        state: "indexing",
+        root: root.display().to_string(),
+        modules: 0,
+        symbols: 0,
+        calls: 0,
+        boot_ms: since_start_ms(),
+        entries: Vec::new(),
+    })
+}
+
+/// Progress of the background scan, polled by the status bar.
+#[tauri::command]
+fn scan_status(state: State<'_, AppState>) -> Result<ScanStatus, String> {
+    let guard = state.scan.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let Some(job) = guard.as_ref() else {
+        return Ok(ScanStatus {
+            state: "idle",
+            phase: String::new(),
+            done: 0,
+            total: 0,
+            fraction: 0.0,
+            elapsed_ms: 0.0,
+            eta_ms: 0.0,
+            error: None,
+        });
+    };
+
+    let p = *job.progress.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let elapsed = job.started.elapsed().as_secs_f64();
+    let f = p.fraction.clamp(0.0, 1.0) as f64;
+    // only project once something measurable has happened
+    let eta = if f > 0.02 && f < 1.0 {
+        elapsed / f * (1.0 - f)
+    } else {
+        0.0
+    };
+
+    let err = job.error.lock().map_err(|_| "内部状态损坏".to_string())?.clone();
+    let done = job.finished.load(Ordering::SeqCst);
+    let state_name = if err.is_some() {
+        "failed"
+    } else if done {
+        "ready"
+    } else {
+        "indexing"
+    };
+
+    Ok(ScanStatus {
+        state: state_name,
+        phase: p.phase.to_string(),
+        done: p.done,
+        total: p.total,
+        fraction: p.fraction,
+        elapsed_ms: elapsed * 1000.0,
+        eta_ms: eta * 1000.0,
+        error: err,
+    })
 }
 
 /// Open the project given on the command line, if any.
 #[tauri::command]
-fn boot(state: State<'_, AppState>) -> Result<Option<ProjectInfo>, String> {
+fn boot(state: State<'_, AppState>) -> Result<Option<OpenResult>, String> {
     let Some(arg) = std::env::args().nth(1) else {
         return Ok(None);
     };
-    match open_at(Path::new(&arg)) {
-        Ok((index, info)) => {
-            remember(&state, index)?;
-            Ok(Some(info))
-        }
-        Err(msg) => Err(msg),
-    }
+    open_project(arg, state).map(Some)
 }
 
 #[tauri::command]
@@ -158,20 +316,40 @@ fn code(id: i64, state: State<'_, AppState>) -> Result<Vec<walk::CodeLine>, Stri
     walk::card_lines(&index.conn, id).map_err(|e| e.to_string())
 }
 
+/// One expansion step: the cards asked for, their outgoing call sites, and the
+/// project-wide fan-in counts.
+#[tauri::command]
+fn cards(ids: Vec<String>, state: State<'_, AppState>) -> Result<CardsPayload, String> {
+    let t = Instant::now();
+    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let index = guard.as_ref().ok_or("还没有打开项目")?;
+    let project_id = project_id_of(&index.conn, &index.root)?;
+    let payload = snapshot::cards_of(&index.conn, project_id, &ids).map_err(|e| e.to_string())?;
+    eprintln!(
+        "[t] cards @{:.0}ms took {:.1}ms wanted={} cards={} calls={}",
+        since_start_ms(),
+        t.elapsed().as_secs_f64() * 1000.0,
+        ids.len(),
+        payload.cards.len(),
+        payload.calls.len()
+    );
+    Ok(payload)
+}
+
+fn project_id_of(conn: &Conn, root: &Path) -> Result<i64, String> {
+    clew_core::store::repo::project_id_by_path(conn, &root.to_string_lossy())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "项目不在库里".to_string())
+}
+
 /// The whole graph in one shot, shaped like the prototype's `DATA`.
 #[tauri::command]
 fn graph(state: State<'_, AppState>) -> Result<clew_core::snapshot::Snapshot, String> {
     let t = Instant::now();
     let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
     let index = guard.as_ref().ok_or("还没有打开项目")?;
-    let project_id = clew_core::store::repo::project_id_by_path(
-        &index.conn,
-        &index.root.to_string_lossy(),
-    )
-    .map_err(|e| e.to_string())?
-    .ok_or("项目不在库里")?;
-    let snap =
-        clew_core::snapshot::snapshot(&index.conn, project_id).map_err(|e| e.to_string())?;
+    let project_id = project_id_of(&index.conn, &index.root)?;
+    let snap = snapshot::snapshot(&index.conn, project_id).map_err(|e| e.to_string())?;
     eprintln!(
         "[t] graph @{:.0}ms took {:.1}ms cards={} calls={}",
         since_start_ms(),
@@ -214,8 +392,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_project,
             boot,
+            scan_status,
             node,
             code,
+            cards,
             graph,
             notes,
             add_note,

@@ -14,6 +14,7 @@ use tree_sitter::{Node, Parser};
 use super::model::{
     Call, CallKind, Card, CardKind, Confidence, Graph, Line, LineKind, MethodRef, SymbolKind,
 };
+use super::progress::weight;
 use super::walker;
 
 /// Per-file facts that go into the `module` table.
@@ -138,16 +139,26 @@ pub struct Builder {
 }
 
 pub fn build(root: &Path) -> anyhow::Result<Built> {
-    build_with(root, false)
+    build_with(root, false, &mut |_, _, _, _| {})
 }
 
-pub fn build_with(root: &Path, include_venv: bool) -> anyhow::Result<Built> {
+pub fn build_with(
+    root: &Path,
+    include_venv: bool,
+    report: &mut dyn FnMut(&'static str, u64, u64, f32),
+) -> anyhow::Result<Built> {
     let t_all = Instant::now();
     let root = std::fs::canonicalize(root)?;
 
     let t_walk = Instant::now();
     let files = walker::collect_with(&root, include_venv);
     let d_walk = t_walk.elapsed();
+    report(
+        "枚举文件",
+        files.len() as u64,
+        files.len() as u64,
+        weight::WALK.1,
+    );
 
     let mut parser = Parser::new();
     parser
@@ -160,7 +171,15 @@ pub fn build_with(root: &Path, include_venv: bool) -> anyhow::Result<Built> {
     let mut bytes = 0usize;
 
     let mut builder = Builder::default();
-    for file in &files {
+    for (i, file) in files.iter().enumerate() {
+        if i % 100 == 0 {
+            report(
+                "解析源码",
+                i as u64,
+                files.len() as u64,
+                weight::lerp(weight::PARSE, i as u64, files.len() as u64),
+            );
+        }
         let t = Instant::now();
         let Ok(source) = std::fs::read_to_string(&file.path) else {
             continue;
@@ -185,8 +204,10 @@ pub fn build_with(root: &Path, include_venv: bool) -> anyhow::Result<Built> {
     }
 
     let t = Instant::now();
+    report("解析调用", 0, 1, weight::RESOLVE.0);
     builder.resolve();
     let d_resolve = t.elapsed();
+    report("解析调用", 1, 1, weight::RESOLVE.1);
     eprintln!(
         "[t] stages files={} bytes={} walk {:.1}ms read {:.1}ms parse {:.1}ms emit {:.1}ms resolve {:.1}ms total {:.1}ms",
         files.len(),

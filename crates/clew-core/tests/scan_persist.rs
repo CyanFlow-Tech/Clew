@@ -279,13 +279,110 @@ fn nested_calls_keep_multibyte_text_intact() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The progress bar must never jump backwards, and must end at 100%.
 #[test]
-fn missing_project_reports_nothing() {
-    let db = std::env::temp_dir().join(format!("clew-missing-{}.db", std::process::id()));
+fn scan_reports_monotonic_progress() {
+    use clew_core::scan::run::scan_with;
+
+    let root = setup("progress");
+    let db_path = root.join("index.db");
+    let mut conn = open(&db_path).unwrap();
+
+    let mut seen: Vec<f32> = Vec::new();
+    scan_with(&mut conn, &root, false, &mut |_phase, _done, _total, f| {
+        seen.push(f);
+    })
+    .unwrap();
+
+    assert!(seen.len() >= 5, "too few progress reports: {seen:?}");
+    let mut prev = -1.0;
+    for f in &seen {
+        assert!(
+            *f >= prev,
+            "progress went backwards: {seen:?}"
+        );
+        assert!(*f >= 0.0 && *f <= 1.0, "fraction out of range: {f}");
+        prev = *f;
+    }
+    assert!((prev - 1.0).abs() < 1e-6, "did not finish at 100%: {seen:?}");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn missing_project_reports_nothing() {    let db = std::env::temp_dir().join(format!("clew-missing-{}.db", std::process::id()));
     let _ = std::fs::remove_file(&db);
     let conn = open(&db).unwrap();
     let hit = repo::project_id_by_path(&conn, Path::new("D:/nope").to_string_lossy().as_ref())
         .unwrap();
     assert!(hit.is_none());
     let _ = std::fs::remove_file(&db);
+}
+
+/// The on-demand read must return exactly what the one-shot snapshot returns,
+/// otherwise the GUI would show a different graph depending on how it loaded.
+#[test]
+fn cards_of_matches_the_whole_snapshot() {
+    use std::collections::BTreeMap;
+
+    use clew_core::snapshot::{cards_of, snapshot};
+
+    let root = setup("cards");
+    let db_path = root.join("index.db");
+    let mut conn = open(&db_path).unwrap();
+    scan(&mut conn, &root, false).unwrap();
+    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+
+    let snap = snapshot(&conn, project_id).unwrap();
+    let ids: Vec<String> = snap.cards.keys().cloned().collect();
+    let one = cards_of(&conn, project_id, &ids).unwrap();
+
+    assert_eq!(
+        serde_json::to_string(&snap.cards).unwrap(),
+        serde_json::to_string(&one.cards).unwrap(),
+        "cards differ between the snapshot and the on-demand read"
+    );
+    assert_eq!(
+        serde_json::to_string(&snap.calls).unwrap(),
+        serde_json::to_string(&one.calls).unwrap(),
+        "calls differ between the snapshot and the on-demand read"
+    );
+
+    // fan-in must match the in-degree counted from the snapshot
+    let mut expect: BTreeMap<String, i64> = BTreeMap::new();
+    for call in snap.calls.values() {
+        if let Some(to) = &call.to {
+            *expect.entry(to.clone()).or_insert(0) += 1;
+        }
+    }
+    for (id, n) in &one.fanin {
+        assert_eq!(
+            expect.get(id).copied().unwrap_or(0),
+            *n,
+            "fan-in mismatch for {id}"
+        );
+    }
+
+    // asking for one card at a time yields the same records as asking for all
+    for id in &ids {
+        let solo = cards_of(&conn, project_id, std::slice::from_ref(id)).unwrap();
+        assert!(solo.cards.contains_key(id), "missing {id}");
+        assert_eq!(
+            serde_json::to_string(&snap.cards[id]).unwrap(),
+            serde_json::to_string(&solo.cards[id]).unwrap(),
+            "solo card differs for {id}"
+        );
+        for (cs, call) in &solo.calls {
+            let all = snap.calls.get(cs).expect("unknown call site");
+            assert_eq!(
+                serde_json::to_string(all).unwrap(),
+                serde_json::to_string(call).unwrap(),
+                "call {cs} differs when read solo"
+            );
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
 }
