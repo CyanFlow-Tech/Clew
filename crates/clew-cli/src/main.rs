@@ -23,6 +23,9 @@ enum Command {
         /// Also index .venv / venv / env
         #[arg(long)]
         include_venv: bool,
+        /// Only index modules, symbols and imports, skipping card bodies
+        #[arg(long)]
+        symbols_only: bool,
     },
     /// List the entry points discovered for a project
     Entries {
@@ -75,6 +78,16 @@ enum Command {
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
     },
+    /// Materialise module cards on demand (what a click does in the GUI)
+    Materialize {
+        /// Project root
+        project: PathBuf,
+        /// Module names, e.g. `pkg.sub.mod`
+        modules: Vec<String>,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
     /// Measure what opening a project costs when cards are read on demand
     Bench {
         /// Project root
@@ -121,6 +134,7 @@ fn main() -> anyhow::Result<()> {
             project,
             db,
             include_venv,
+            symbols_only,
         } => {
             let root = project.canonicalize()?;
             let db_path = resolve(&root, db);
@@ -129,7 +143,13 @@ fn main() -> anyhow::Result<()> {
             }
 
             let mut conn = clew_core::store::open(&db_path)?;
-            let stats = clew_core::scan::run::scan(&mut conn, &root, include_venv)?;
+            let stats = clew_core::scan::run::scan_with(
+                &mut conn,
+                &root,
+                include_venv,
+                !symbols_only,
+                &mut |_, _, _, _| {},
+            )?;
 
             println!("db         {}", display(&db_path));
             println!("modules    {} (3rd {})", stats.modules, stats.third_party_modules);
@@ -258,6 +278,34 @@ fn main() -> anyhow::Result<()> {
             println!("calls      {}", snap.calls.len());
             println!("entries    {}", snap.entries.len());
             println!("size       {} KiB", bytes / 1024);
+        }
+        Command::Materialize {
+            project,
+            modules,
+            db,
+        } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let mut mat = clew_core::scan::materialize::Materializer::open(project_id, conn)?;
+            // GUI 打开项目时就建好了，这里对齐一下计时口径
+            let t_pre = std::time::Instant::now();
+            mat.preload()?;
+            println!("preload   {:.1} ms", ms(t_pre.elapsed()));
+            let mut total = std::time::Duration::ZERO;
+            for module in &modules {
+                let t = std::time::Instant::now();
+                let cards = mat.ensure(module)?;
+                let d = t.elapsed();
+                total += d;
+                println!("{:<40} {:>4} cards  {:>8.1} ms", module, cards, ms(d));
+            }
+            if modules.len() > 1 {
+                println!(
+                    "total {:.1} ms  avg {:.1} ms",
+                    ms(total),
+                    ms(total) / modules.len() as f64
+                );
+            }
         }
         Command::Bench {
             project,

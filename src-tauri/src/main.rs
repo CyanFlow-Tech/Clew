@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use clew_core::scan::materialize::Materializer;
 use clew_core::scan::progress::Progress;
 use clew_core::snapshot::{self, CardsPayload, Entry};
 use clew_core::store::{self, Conn, repo};
@@ -25,8 +26,10 @@ fn since_start_ms() -> f64 {
 }
 
 struct Index {
-    conn: Conn,
     root: PathBuf,
+    project_id: i64,
+    /// 卡片按文件懒物化，连接与解析缓存都放在这里
+    mat: Materializer,
 }
 
 /// A background scan started when a project is opened for the first time.
@@ -119,7 +122,18 @@ fn open_ready(path: &Path) -> Result<(Index, OpenResult), String> {
         t_open.elapsed().as_secs_f64() * 1000.0
     );
 
-    Ok((Index { conn, root }, info))
+    let mut mat = Materializer::open(project_id, conn).map_err(|e| e.to_string())?;
+    // 全项目索引在这里建好，第一次点击就不用再等
+    let t_pre = Instant::now();
+    if let Err(e) = mat.preload() {
+        eprintln!("[t] preload failed: {e}");
+    }
+    eprintln!(
+        "[t] global index @{:.0}ms took {:.1}ms",
+        since_start_ms(),
+        t_pre.elapsed().as_secs_f64() * 1000.0
+    );
+    Ok((Index { root, project_id, mat }, info))
 }
 
 fn remember(state: &State<'_, AppState>, index: Index) -> Result<(), String> {
@@ -150,6 +164,8 @@ fn spawn_scan(root: PathBuf) -> Arc<ScanJob> {
             let stats = clew_core::scan::run::scan_with(
                 &mut conn,
                 &root,
+                false,
+                // 先只建目录，卡片等点开再算
                 false,
                 &mut |phase, done, total, fraction| {
                     if let Ok(mut p) = progress.lock() {
@@ -343,7 +359,7 @@ fn boot(state: State<'_, AppState>) -> Result<Option<OpenResult>, String> {
 fn node(id: i64, state: State<'_, AppState>) -> Result<walk::NodeView, String> {
     let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
     let index = guard.as_ref().ok_or("还没有打开项目")?;
-    walk::node(&index.conn, id)
+    walk::node(index.mat.conn(), id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("找不到符号 {id}"))
 }
@@ -352,25 +368,40 @@ fn node(id: i64, state: State<'_, AppState>) -> Result<walk::NodeView, String> {
 fn code(id: i64, state: State<'_, AppState>) -> Result<Vec<walk::CodeLine>, String> {
     let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
     let index = guard.as_ref().ok_or("还没有打开项目")?;
-    walk::card_lines(&index.conn, id).map_err(|e| e.to_string())
+    walk::card_lines(index.mat.conn(), id).map_err(|e| e.to_string())
 }
 
 /// One expansion step: the cards asked for, their outgoing call sites, and the
 /// project-wide fan-in counts.
+///
+/// 卡片按文件懒物化，没算过的模块在这里现算，算过的直接读库。
 #[tauri::command]
 fn cards(ids: Vec<String>, state: State<'_, AppState>) -> Result<CardsPayload, String> {
     let t = Instant::now();
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
-    let index = guard.as_ref().ok_or("还没有打开项目")?;
-    let project_id = project_id_of(&index.conn, &index.root)?;
-    let payload = snapshot::cards_of(&index.conn, project_id, &ids).map_err(|e| e.to_string())?;
+    let mut guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let index = guard.as_mut().ok_or("还没有打开项目")?;
+    let project_id = index.project_id;
+
+    let mut materialised = 0usize;
+    for id in &ids {
+        if let Some(module) = clew_core::scan::materialize::module_of_card(id) {
+            match index.mat.ensure(module) {
+                Ok(n) => materialised += n,
+                Err(e) => eprintln!("[t] materialize {module} failed: {e}"),
+            }
+        }
+    }
+
+    let payload =
+        snapshot::cards_of(index.mat.conn(), project_id, &ids).map_err(|e| e.to_string())?;
     eprintln!(
-        "[t] cards @{:.0}ms took {:.1}ms wanted={} cards={} calls={}",
+        "[t] cards @{:.0}ms took {:.1}ms wanted={} cards={} calls={} built={}",
         since_start_ms(),
         t.elapsed().as_secs_f64() * 1000.0,
         ids.len(),
         payload.cards.len(),
-        payload.calls.len()
+        payload.calls.len(),
+        materialised
     );
     Ok(payload)
 }
@@ -387,8 +418,8 @@ fn graph(state: State<'_, AppState>) -> Result<clew_core::snapshot::Snapshot, St
     let t = Instant::now();
     let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
     let index = guard.as_ref().ok_or("还没有打开项目")?;
-    let project_id = project_id_of(&index.conn, &index.root)?;
-    let snap = snapshot::snapshot(&index.conn, project_id).map_err(|e| e.to_string())?;
+    let project_id = project_id_of(index.mat.conn(), &index.root)?;
+    let snap = snapshot::snapshot(index.mat.conn(), project_id).map_err(|e| e.to_string())?;
     eprintln!(
         "[t] graph @{:.0}ms took {:.1}ms cards={} calls={}",
         since_start_ms(),
@@ -403,14 +434,14 @@ fn graph(state: State<'_, AppState>) -> Result<clew_core::snapshot::Snapshot, St
 fn notes(id: i64, state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
     let index = guard.as_ref().ok_or("还没有打开项目")?;
-    walk::notes(&index.conn, id).map_err(|e| e.to_string())
+    walk::notes(index.mat.conn(), id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn add_note(id: i64, text: String, state: State<'_, AppState>) -> Result<(), String> {
     let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
     let index = guard.as_ref().ok_or("还没有打开项目")?;
-    repo::insert_note(&index.conn, id, text.trim())
+    repo::insert_note(index.mat.conn(), id, text.trim())
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

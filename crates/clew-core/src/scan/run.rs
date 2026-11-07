@@ -46,14 +46,19 @@ fn card_parts(card_id: &str) -> (String, String) {
 }
 
 pub fn scan(conn: &mut Connection, root: &Path, include_venv: bool) -> anyhow::Result<ScanStats> {
-    scan_with(conn, root, include_venv, &mut |_, _, _, _| {})
+    scan_with(conn, root, include_venv, true, &mut |_, _, _, _| {})
 }
 
 /// Same as [`scan`], but reports coarse progress for a UI progress bar.
+///
+/// `emit_cards = false` keeps only modules, symbols and imports, which is what
+/// the GUI needs before it can show an entry point. Card bodies are built later
+/// per file.
 pub fn scan_with(
     conn: &mut Connection,
     root: &Path,
     include_venv: bool,
+    emit_cards: bool,
     report: &mut dyn FnMut(&'static str, u64, u64, f32),
 ) -> anyhow::Result<ScanStats> {
     let started = Instant::now();
@@ -63,7 +68,7 @@ pub fn scan_with(
     let root = std::fs::canonicalize(root)?;
 
     let t_build = Instant::now();
-    let built = graph_build::build_with(&root, include_venv, report)?;
+    let built = graph_build::build_with(&root, include_venv, emit_cards, report)?;
     let d_build = t_build.elapsed();
 
     let t_db = Instant::now();
@@ -87,14 +92,32 @@ pub fn scan_with(
     // symbols, keyed so card ids can be resolved without touching SQL again
     let t_syms = Instant::now();
     let mut ids: HashMap<(String, String), i64> = HashMap::new();
-    for sym in &built.symbols {
-        let tp = *third_party.get(sym.module.as_str()).unwrap_or(&false);
-        let id = repo::insert_symbol(&tx, project_id, sym, tp)?;
-        ids.insert((sym.module.clone(), sym.qualname.clone()), id);
-        stats.symbols += 1;
-        match sym.kind {
-            SymbolKind::Class => stats.classes += 1,
-            _ => stats.functions += 1,
+    {
+        // 一条语句复用到底，逐条重新 prepare 在十万行规模上很贵
+        let mut stmt = tx.prepare(repo::SYMBOL_INSERT)?;
+        for sym in &built.symbols {
+            let tp = *third_party.get(sym.module.as_str()).unwrap_or(&false);
+            let id = stmt.query_row(
+                rusqlite::params![
+                    project_id,
+                    sym.module,
+                    sym.qualname,
+                    sym.kind.as_str(),
+                    sym.src_hash,
+                    sym.def_line,
+                    sym.def_col,
+                    sym.body_start as i64,
+                    sym.body_end as i64,
+                    tp as i64,
+                ],
+                |row| row.get::<_, i64>(0),
+            )?;
+            ids.insert((sym.module.clone(), sym.qualname.clone()), id);
+            stats.symbols += 1;
+            match sym.kind {
+                SymbolKind::Class => stats.classes += 1,
+                _ => stats.functions += 1,
+            }
         }
     }
 

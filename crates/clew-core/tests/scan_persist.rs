@@ -289,7 +289,7 @@ fn scan_reports_monotonic_progress() {
     let mut conn = open(&db_path).unwrap();
 
     let mut seen: Vec<f32> = Vec::new();
-    scan_with(&mut conn, &root, false, &mut |_phase, _done, _total, f| {
+    scan_with(&mut conn, &root, false, true, &mut |_phase, _done, _total, f| {
         seen.push(f);
     })
     .unwrap();
@@ -306,6 +306,80 @@ fn scan_reports_monotonic_progress() {
     }
     assert!((prev - 1.0).abs() < 1e-6, "did not finish at 100%: {seen:?}");
 
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 只建目录之后按需物化一个文件，结果应与全量扫描完全一致。
+#[test]
+fn materialize_matches_full_scan() {
+    use clew_core::scan::materialize::Materializer;
+    use clew_core::scan::run::scan_with;
+    use clew_core::snapshot::{cards_of, snapshot};
+
+    // 基准：一次全量扫描
+    let full_root = setup("mat-full");
+    let mut full_conn = open(&full_root.join("index.db")).unwrap();
+    scan(&mut full_conn, &full_root, false).unwrap();
+    let full_pid = repo::project_id_by_path(&full_conn, &full_root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+    let full = snapshot(&full_conn, full_pid).unwrap();
+    let a_cards: Vec<String> = full
+        .cards
+        .keys()
+        .filter(|id| id.starts_with("a:"))
+        .cloned()
+        .collect();
+    assert!(!a_cards.is_empty());
+
+    // 只建目录
+    let root = setup("mat-lazy");
+    let db = root.join("index.db");
+    let mut conn = open(&db).unwrap();
+    let stats = scan_with(&mut conn, &root, false, false, &mut |_, _, _, _| {}).unwrap();
+    assert_eq!(stats.symbols, 12, "目录层应当照常建立符号");
+    assert_eq!(stats.call_sites, 0, "目录层不应记录调用点");
+    let pid = repo::project_id_by_path(&conn, &root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+    let empty = cards_of(&conn, pid, &a_cards).unwrap();
+    assert!(
+        empty.cards.values().all(|c| c.lines.is_empty()),
+        "物化之前不该有卡片内容"
+    );
+    drop(conn);
+
+    // 按需物化 a 这一个文件
+    let conn = open(&db).unwrap();
+    let mut mat = Materializer::open(pid, conn).unwrap();
+    let written = mat.ensure("a").unwrap();
+    assert!(written >= 5, "a 里应当物化出若干卡片，实际 {written}");
+    let lazy_no = cards_of(mat.conn(), pid, &a_cards).unwrap();
+
+    assert_eq!(
+        serde_json::to_string(&full.cards["a:A"]).unwrap(),
+        serde_json::to_string(&lazy_no.cards["a:A"]).unwrap(),
+        "类卡片与全量结果不一致"
+    );
+    for id in &a_cards {
+        let want = serde_json::to_string(&full.cards[id]).unwrap();
+        let got = serde_json::to_string(&lazy_no.cards[id]).unwrap();
+        assert_eq!(want, got, "卡片 {id} 与全量结果不一致");
+    }
+
+    // 跨模块的调用目标也要能落库：只看本模块的符号表会查不到别的模块
+    mat.ensure("b").unwrap();
+    let b_module = cards_of(mat.conn(), pid, &["b:<module>".to_string()]).unwrap();
+    drop(mat);
+    assert!(
+        b_module
+            .calls
+            .values()
+            .any(|c| c.to.as_deref() == Some("a:A")),
+        "b 里对 a.A 的调用没有解析到目标"
+    );
+
+    let _ = std::fs::remove_dir_all(&full_root);
     let _ = std::fs::remove_dir_all(&root);
 }
 

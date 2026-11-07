@@ -48,6 +48,22 @@ pub fn clear_project(conn: &Connection, project_id: i64) -> rusqlite::Result<()>
     Ok(())
 }
 
+/// Upsert one symbol. Kept as a constant so the scan can prepare it once and
+/// reuse the statement for a hundred thousand rows.
+pub const SYMBOL_INSERT: &str = "\
+INSERT INTO symbol (project_id, module, qualname, kind, src_hash, def_line, def_col,
+                    body_start, body_end, is_third_party, is_entry, entry_confidence)
+VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,NULL)
+ON CONFLICT(project_id, module, qualname) DO UPDATE SET
+    kind          = excluded.kind,
+    src_hash      = excluded.src_hash,
+    def_line      = excluded.def_line,
+    def_col       = excluded.def_col,
+    body_start    = excluded.body_start,
+    body_end      = excluded.body_end,
+    is_third_party = excluded.is_third_party
+RETURNING id";
+
 pub fn insert_symbol(
     conn: &Connection,
     project_id: i64,
@@ -55,18 +71,7 @@ pub fn insert_symbol(
     is_third_party: bool,
 ) -> rusqlite::Result<i64> {
     conn.query_row(
-        "INSERT INTO symbol (project_id, module, qualname, kind, src_hash, def_line, def_col,
-                             body_start, body_end, is_third_party, is_entry, entry_confidence)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,NULL)
-         ON CONFLICT(project_id, module, qualname) DO UPDATE SET
-             kind          = excluded.kind,
-             src_hash      = excluded.src_hash,
-             def_line      = excluded.def_line,
-             def_col       = excluded.def_col,
-             body_start    = excluded.body_start,
-             body_end      = excluded.body_end,
-             is_third_party = excluded.is_third_party
-         RETURNING id",
+        SYMBOL_INSERT,
         params![
             project_id,
             sym.module,

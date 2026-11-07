@@ -4,11 +4,14 @@
 //! inference, then project-wide uniqueness.
 //! Deliberately no type-system analysis here (that is ty's job): syntax level only.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use blake3::Hasher;
+use rayon::prelude::*;
 use tree_sitter::{Node, Parser};
 
 use super::model::{
@@ -98,7 +101,7 @@ struct ImportInfo {
     module_import: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RawCall {
     target: String,
     kind: CallKind,
@@ -108,6 +111,7 @@ struct RawCall {
     line: u32,
 }
 
+#[derive(Clone)]
 pub struct Builder {
     src: Vec<u8>,
     module: String,
@@ -132,6 +136,13 @@ pub struct Builder {
     module_cards: BTreeMap<String, Vec<Line>>,
     /// Counter for the `%N` temporaries, unique within one card
     temp_counter: usize,
+    /// Skip card bodies and call sites, keep only definitions and imports.
+    /// The GUI uses this for a fast first index and materialises cards later.
+    symbols_only: bool,
+    /// 外部注入的全项目索引。只解析一个文件时，靠它判断「这个名字全项目唯一」
+    /// 与「同名方法有哪些候选」，否则这些调用只能落成未解析。
+    pub(crate) global_by_name: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    pub(crate) global_by_method: Option<Arc<BTreeMap<String, Vec<String>>>>,
     /// rows to persist
     out_modules: Vec<ModuleMeta>,
     out_symbols: Vec<SymbolMeta>,
@@ -139,12 +150,13 @@ pub struct Builder {
 }
 
 pub fn build(root: &Path) -> anyhow::Result<Built> {
-    build_with(root, false, &mut |_, _, _, _| {})
+    build_with(root, false, true, &mut |_, _, _, _| {})
 }
 
 pub fn build_with(
     root: &Path,
     include_venv: bool,
+    emit_cards: bool,
     report: &mut dyn FnMut(&'static str, u64, u64, f32),
 ) -> anyhow::Result<Built> {
     let t_all = Instant::now();
@@ -160,48 +172,68 @@ pub fn build_with(
         weight::WALK.1,
     );
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_python::LANGUAGE.into())
-        .expect("failed to load tree-sitter-python");
-
-    let mut d_read = Duration::ZERO;
-    let mut d_parse = Duration::ZERO;
-    let mut d_emit = Duration::ZERO;
-    let mut bytes = 0usize;
+    // 每个文件互相独立，解析与提取按核并行，之后合并再统一解析调用。
+    // 每块 500 个文件报告一次进度，并行期间不至于让进度条停住。
+    let d_read = AtomicU64::new(0);
+    let d_parse = AtomicU64::new(0);
+    let d_emit = AtomicU64::new(0);
+    let bytes = AtomicU64::new(0);
 
     let mut builder = Builder::default();
-    for (i, file) in files.iter().enumerate() {
-        if i % 100 == 0 {
-            report(
-                "解析源码",
-                i as u64,
-                files.len() as u64,
-                weight::lerp(weight::PARSE, i as u64, files.len() as u64),
-            );
+    builder.symbols_only = !emit_cards;
+
+    const CHUNK: usize = 500;
+    let mut done = 0usize;
+    for batch in files.chunks(CHUNK) {
+        let parts: Vec<Builder> = batch
+            .par_iter()
+            .map_init(new_parser, |parser, file| {
+                let mut part = Builder::default();
+                part.symbols_only = !emit_cards;
+
+                let t = Instant::now();
+                let Ok(source) = std::fs::read_to_string(&file.path) else {
+                    return part;
+                };
+                bytes.fetch_add(source.len() as u64, Ordering::Relaxed);
+                d_read.fetch_add(nanos(t.elapsed()), Ordering::Relaxed);
+
+                let t = Instant::now();
+                let tree = match parser.parse(&source, None) {
+                    Some(t) => t,
+                    None => return part,
+                };
+                d_parse.fetch_add(nanos(t.elapsed()), Ordering::Relaxed);
+
+                let mut hasher = Hasher::new();
+                hasher.update(source.as_bytes());
+                let src_hash = hasher.finalize().to_hex().to_string();
+
+                let t = Instant::now();
+                part.file(file, source.as_bytes(), tree.root_node(), src_hash);
+                d_emit.fetch_add(nanos(t.elapsed()), Ordering::Relaxed);
+                part
+            })
+            .collect();
+
+        for part in parts {
+            builder.merge(part);
         }
-        let t = Instant::now();
-        let Ok(source) = std::fs::read_to_string(&file.path) else {
-            continue;
-        };
-        bytes += source.len();
-        d_read += t.elapsed();
-
-        let t = Instant::now();
-        let tree = match parser.parse(&source, None) {
-            Some(t) => t,
-            None => continue,
-        };
-        d_parse += t.elapsed();
-
-        let mut hasher = Hasher::new();
-        hasher.update(source.as_bytes());
-        let src_hash = hasher.finalize().to_hex().to_string();
-
-        let t = Instant::now();
-        builder.file(file, source.as_bytes(), tree.root_node(), src_hash);
-        d_emit += t.elapsed();
+        done += batch.len();
+        report(
+            "解析源码",
+            done as u64,
+            files.len() as u64,
+            weight::lerp(weight::PARSE, done as u64, files.len() as u64),
+        );
     }
+
+    let (d_read, d_parse, d_emit, bytes) = (
+        Duration::from_nanos(d_read.load(Ordering::Relaxed)),
+        Duration::from_nanos(d_parse.load(Ordering::Relaxed)),
+        Duration::from_nanos(d_emit.load(Ordering::Relaxed)),
+        bytes.load(Ordering::Relaxed) as usize,
+    );
 
     let t = Instant::now();
     report("解析调用", 0, 1, weight::RESOLVE.0);
@@ -247,8 +279,7 @@ pub fn build_with(
     })
 }
 
-impl Default for Builder {
-    fn default() -> Self {
+impl Default for Builder {    fn default() -> Self {
         Self {
             src: Vec::new(),
             module: String::new(),
@@ -264,6 +295,9 @@ impl Default for Builder {
             class_by_qualname: BTreeMap::new(),
             module_cards: BTreeMap::new(),
             temp_counter: 0,
+            symbols_only: false,
+            global_by_name: None,
+            global_by_method: None,
             out_modules: Vec::new(),
             out_symbols: Vec::new(),
             out_classes: Vec::new(),
@@ -272,6 +306,70 @@ impl Default for Builder {
 }
 
 impl Builder {
+    /// A builder that emits full cards, used by on-demand materialisation.
+    pub(crate) fn for_cards() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn cards(&self) -> &BTreeMap<String, Card> {
+        &self.cards
+    }
+
+    pub(crate) fn calls(&self) -> &BTreeMap<String, Call> {
+        &self.calls
+    }
+
+    /// `__main__` guard bodies, keyed by module. They belong to the module entry
+    /// pseudo symbol rather than to a card of their own.
+    pub(crate) fn module_cards(&self) -> &BTreeMap<String, Vec<Line>> {
+        &self.module_cards
+    }
+
+    /// Modules this file imports from, used to decide what to parse alongside it.
+    pub(crate) fn imported_modules(&self) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for table in self.imports.values() {
+            for info in table.values() {
+                out.insert(info.module.clone());
+            }
+        }
+        out
+    }
+
+    /// Fold another builder's per-file results into this one.
+    ///
+    /// Files are parsed in parallel, each into its own builder, then merged
+    /// here before resolution. Every cross-file map keys on module names, so
+    /// extending them is enough.
+    pub(crate) fn merge(&mut self, other: Builder) {
+        self.cards.extend(other.cards);
+        self.calls.extend(other.calls);
+        self.raw_calls.extend(other.raw_calls);
+        for (k, v) in other.imports {
+            self.imports.entry(k).or_default().extend(v);
+        }
+        for (k, v) in other.methods {
+            self.methods.entry(k).or_default().extend(v);
+        }
+        self.class_bases.extend(other.class_bases);
+        for (k, v) in other.class_attrs {
+            self.class_attrs.entry(k).or_default().extend(v);
+        }
+        for (k, v) in other.card_locals {
+            self.card_locals.entry(k).or_default().extend(v);
+        }
+        self.class_ids.extend(other.class_ids);
+        for (k, v) in other.class_by_qualname {
+            self.class_by_qualname.entry(k).or_insert(v);
+        }
+        for (k, v) in other.module_cards {
+            self.module_cards.entry(k).or_default().extend(v);
+        }
+        self.out_modules.extend(other.out_modules);
+        self.out_symbols.extend(other.out_symbols);
+        self.out_classes.extend(other.out_classes);
+    }
+
     fn text(&self, node: Node) -> String {
         node.utf8_text(&self.src).unwrap_or("").to_string()
     }
@@ -433,7 +531,7 @@ impl Builder {
         });
     }
 
-    fn file(&mut self, file: &walker::PyFile, src: &[u8], root: Node, src_hash: String) {
+    pub(crate) fn file(&mut self, file: &walker::PyFile, src: &[u8], root: Node, src_hash: String) {
         self.src = src.to_vec();
         self.module = file.module.clone();
 
@@ -448,7 +546,9 @@ impl Builder {
                 "if_statement" => {
                     if is_main_guard(&self.src, node) {
                         main_guard = true;
-                        self.module_body(node);
+                        if !self.symbols_only {
+                            self.module_body(node);
+                        }
                     }
                 }
                 "decorated_definition" => {
@@ -639,6 +739,24 @@ impl Builder {
             None => name.clone(),
         };
         let id = Graph::card_id(&self.module, &qualname);
+        let kind = if class.is_some() {
+            CardKind::Method
+        } else {
+            CardKind::Function
+        };
+
+        // 只建符号时到此为止：函数体留给按需物化
+        if self.symbols_only {
+            self.push_symbol(node, &qualname, SymbolKind::of_card(kind));
+            if let Some(c) = class {
+                self.methods
+                    .entry((self.module.clone(), c.to_string()))
+                    .or_default()
+                    .insert(name, id);
+            }
+            return;
+        }
+
         let params = self.params_of(node);
         self.temp_counter = 0;
         let mut lines = Vec::new();
@@ -647,11 +765,6 @@ impl Builder {
             self.emit_block(body, &id, 0, &mut lines, &mut locals);
         }
         let title = format!("{qualname}({})", params.join(", "));
-        let kind = if class.is_some() {
-            CardKind::Method
-        } else {
-            CardKind::Function
-        };
 
         self.cards.insert(
             id.clone(),
@@ -700,6 +813,34 @@ impl Builder {
                     bases.push(self.text(ch));
                 }
             }
+        }
+
+        // 只建符号时：类体不展开，方法只登记名字与位置
+        if self.symbols_only {
+            self.push_symbol(node, &name, SymbolKind::Class);
+            self.class_ids
+                .insert((self.module.clone(), name.clone()), id.clone());
+            self.class_by_qualname
+                .entry(name.clone())
+                .or_insert_with(|| id.clone());
+            self.class_bases
+                .insert(id.clone(), (self.module.clone(), bases));
+            if let Some(body) = node.child_by_field_name("body") {
+                let mut cursor = body.walk();
+                for child in body.children(&mut cursor) {
+                    let def = if child.kind() == "decorated_definition" {
+                        child.child_by_field_name("definition")
+                    } else if child.kind() == "function_definition" {
+                        Some(child)
+                    } else {
+                        None
+                    };
+                    if let Some(def) = def {
+                        self.add_function(def, Some(&name));
+                    }
+                }
+            }
+            return;
         }
 
         let mut methods = Vec::new();
@@ -1008,19 +1149,24 @@ impl Builder {
     }
 
     // ── resolution ────────────────────────────────────────────────
-    fn resolve(&mut self) {
-        let by_name: BTreeMap<String, Vec<String>> = {
-            let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for (id, card) in &self.cards {
-                let bare = card
-                    .qualname
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(&card.qualname)
-                    .to_string();
-                map.entry(bare).or_default().push(id.clone());
-            }
-            map
+    pub(crate) fn resolve(&mut self) {
+        // 注入的全项目索引优先。按需物化一个文件时，本地的卡片只有几十张，
+        // 靠它判断唯一性会把「全项目有十个同名函数」看成唯一。
+        let by_name: Arc<BTreeMap<String, Vec<String>>> = match &self.global_by_name {
+            Some(shared) => shared.clone(),
+            None => Arc::new({
+                let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+                for (id, card) in &self.cards {
+                    let bare = card
+                        .qualname
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(&card.qualname)
+                        .to_string();
+                    map.entry(bare).or_default().push(id.clone());
+                }
+                map
+            }),
         };
 
         // Method lookup by name, built once.
@@ -1028,7 +1174,7 @@ impl Builder {
         // Walking `self.methods` per call site is what made resolution quadratic:
         // on a 220k-symbol project every `obj.x()` scanned the whole method table.
         // These two indexes turn each lookup into a single map hit.
-        let (by_module_method, by_method) = {
+        let (by_module_method, local_by_method) = {
             let mut local: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
             let mut global: BTreeMap<String, Vec<String>> = BTreeMap::new();
             for ((module, _class), ms) in &self.methods {
@@ -1049,6 +1195,10 @@ impl Builder {
                 v.dedup();
             }
             (local, global)
+        };
+        let by_method: Arc<BTreeMap<String, Vec<String>>> = match &self.global_by_method {
+            Some(shared) => shared.clone(),
+            None => Arc::new(local_by_method),
         };
 
         // local variables -> class cards
@@ -1305,8 +1455,20 @@ impl Builder {
 }
 
 /// First `block` child of a compound statement.
-fn first_block(node: Node) -> Option<Node> {
-    let mut cursor = node.walk();
+/// One parser per worker thread, built once by `map_init`.
+pub(crate) fn new_parser() -> Parser {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_python::LANGUAGE.into())
+        .expect("failed to load tree-sitter-python");
+    parser
+}
+
+fn nanos(d: Duration) -> u64 {
+    d.as_nanos().min(u64::MAX as u128) as u64
+}
+
+fn first_block(node: Node) -> Option<Node> {    let mut cursor = node.walk();
     node.children(&mut cursor).find(|c| c.kind() == "block")
 }
 
