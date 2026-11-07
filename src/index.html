@@ -146,6 +146,8 @@
   function clewFail(msg) {
     document.body.innerHTML =
       '<pre style="color:#f88;padding:24px;white-space:pre-wrap">' + msg + "</pre>";
+    // 报错时窗口可能还藏着，先亮出来，不然用户看到的是什么也没发生
+    if (api) api.invoke("ready").catch(function () {});
   }
 
   window.onerror = function (msg, src, line, col, err) {
@@ -188,7 +190,12 @@
         t.onerror = function () {
           clewFail("shell.js 加载失败");
         };
-        t.onload = function () { mark("shell-loaded"); };
+        t.onload = function () {
+          mark("shell-loaded");
+          // 外壳的 DOM 已经就位，直接让窗口出现。页面加载完成那边还有一层，
+          // 所以这里不猜时间，也不需要等渲染帧。
+          if (api) api.invoke("ready").catch(function () {});
+        };
         document.body.appendChild(t);
       };
       document.body.appendChild(s);

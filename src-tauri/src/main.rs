@@ -453,13 +453,28 @@ fn source_root(state: State<'_, AppState>) -> Result<String, String> {
     Ok(index.root.display().to_string())
 }
 
+/// 前端画出第一帧之后把窗口亮出来。窗口在配置里是隐藏的，
+/// 这样 WebView2 初始化那段空白不会被看到。
+#[tauri::command]
+fn ready(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.show().map_err(|e| e.to_string())
+}
+
 fn main() {
     START.set(Instant::now()).ok();
     eprintln!("[t] main starts");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        // 页面加载完就一定有内容可画，这时候亮窗口。前端脚本正常时会先喊
+        // ready，这里兜住它没跑到那一步的情况，不靠固定超时去猜。
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let _ = webview.window().show();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            ready,
             open_project,
             boot,
             scan_status,
