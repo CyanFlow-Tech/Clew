@@ -185,6 +185,9 @@ function renderCard(id) {
       '<span class="kindbadge">← ' + esc(n.bases.join(", ")) + '</span>' : '') +
     '<span class="m">' + esc(n.module) + '</span>' +
     '<span class="btn tg">' + toggleLabel(id, st) + '</span>' +
+    '<span class="btn pin' +
+      (window.__clewIsFavorite && window.__clewIsFavorite(id) ? " on" : "") +
+      '" title="标记为入口">⚑</span>' +
     (roots.has(id) ? '' : '<span class="btn close">✕</span>');
   head.onclick = function () { select(id); };
   head.ondblclick = function (e) { e.stopPropagation(); openFocus(id); };
@@ -198,6 +201,11 @@ function renderCard(id) {
   if (closeBtn) closeBtn.onclick = function (e) {
     e.stopPropagation();
     closeCard(id);
+  };
+  const pinBtn = head.querySelector(".pin");
+  if (pinBtn) pinBtn.onclick = function (e) {
+    e.stopPropagation();
+    if (window.__clewToggleFavorite) window.__clewToggleFavorite(id);
   };
   el.appendChild(head);
 
@@ -677,14 +685,14 @@ function renderTrail() {
   });
 }
 
-// ─── 入口 tab：每个入口一份独立的图 ─────────────────────────────
-const tabs = [];        // 按入口下标稀疏存放，null 表示还没建
-let activeTab = -1;
+// ─── 根：每个根一份独立的图 ─────────────────────────────────────
+const tabs = new Map();   // 根 card id -> 这份图的状态
+let activeRoot = null;
 
-function blankTab(entry) {
+function blankTab(rootId) {
   return {
-    entryId: entry.id,
-    label: entry.label,
+    entryId: rootId,
+    label: rootId,
     cardEls: {},
     state: {},
     openMethods: {},
@@ -699,25 +707,16 @@ function blankTab(entry) {
   };
 }
 
-// 入口只登记不预建：真正切到某个入口时才建它的 tab 和卡片
-function ensureTab(i) {
-  const entry = ENTRIES[i];
-  if (!entry || !entry.id) return null;
-  if (!tabs[i]) tabs[i] = blankTab(entry);
-  return tabs[i];
-}
-
-function firstEntryIndex() {
-  for (let i = 0; i < ENTRIES.length; i++) {
-    const e = ENTRIES[i];
-    if (e && e.id) return i;
-  }
-  return -1;
+// 根只登记不预建：真正切到某个根时才建它的卡片
+function ensureTab(rootId) {
+  if (!rootId) return null;
+  if (!tabs.has(rootId)) tabs.set(rootId, blankTab(rootId));
+  return tabs.get(rootId);
 }
 
 function saveTab() {
-  if (activeTab < 0) return;
-  const t = tabs[activeTab];
+  if (!activeRoot) return;
+  const t = tabs.get(activeRoot);
   if (!t) return;
   t.cardEls = cardEls;
   t.state = state;
@@ -734,9 +733,10 @@ function saveTab() {
     .filter(function (el) { return el !== svg; });
 }
 
-function loadTab(i) {
-  const t = ensureTab(i);
+function loadTab(rootId) {
+  const t = ensureTab(rootId);
   if (!t) return;
+  activeRoot = rootId;
   cardEls = t.cardEls;
   state = t.state;
   openMethods = t.openMethods;
@@ -757,55 +757,41 @@ function loadTab(i) {
   });
   t.nodes.forEach(function (el) { world.appendChild(el); });
 
-  activeTab = i;
-  renderTabs();
   refreshSelectionUI(selectedId);
   renderTrail();
   relayout();
+  if (window.__clewRootChanged) window.__clewRootChanged(rootId);
 }
 
-async function switchTab(i) {
-  if (i === activeTab) return;
-  const t = ensureTab(i);
+// 从入口面板打开任意一个符号作根。打开过就复用它的 tab。
+async function openRoot(rootId) {
+  if (!rootId || rootId === activeRoot) {
+    if (rootId && window.__clewRootOpened) window.__clewRootOpened(rootId);
+    return;
+  }
+  const t = ensureTab(rootId);
   if (!t) return;
   saveTab();
-  loadTab(i);
+  loadTab(rootId);
   if (!t.nodes.length) {
-    // 只有走到这里才去展开这个入口的节点
-    roots.add(t.entryId);
-    await expand(t.entryId);
+    // 只有第一次开这个根才去取它的卡片
+    roots.add(rootId);
+    await expand(rootId);
     saveTab();
   }
+  if (window.__clewRootOpened) window.__clewRootOpened(rootId);
 }
 
-let entrySelect = null;
+window.openRoot = openRoot;
+window.getActiveRoot = function () { return activeRoot; };
+window.__clewRefreshCard = function (id) {
+  if (cardEls[id]) renderCard(id);
+};
 
-function renderTabs() {
-  const box = document.getElementById("entries");
-  if (!entrySelect) {
-    entrySelect = document.createElement("select");
-    entrySelect.className = "ent-select";
-    entrySelect.title = "选择要看的入口";
-    // 入口全部列进来，不设上限；节点等真正切过去时才建
-    ENTRIES.forEach(function (e, i) {
-      if (!e || !e.id) return;
-      const o = document.createElement("option");
-      o.value = String(i);
-      o.textContent = e.label.replace(":<module>", "");
-      o.title = e.label;
-      entrySelect.appendChild(o);
-    });
-    entrySelect.onchange = function () {
-      switchTab(Number(entrySelect.value));
-    };
-    box.appendChild(entrySelect);
-  }
-  entrySelect.value = String(activeTab < 0 ? 0 : activeTab);
-}
-
-// 换项目时整份换掉：数据、画布、每个入口的状态全部重建
-async function bootProject(entries) {
-  ENTRIES = entries || [];
+// 换项目时整份换掉：数据、画布、每个根的状态全部重建
+async function bootProject(entriesOrRoot) {
+  // 兼容旧调用：传入口数组就取第一个作根，传字符串就是根本身，传空数组表示清空
+  if (Array.isArray(entriesOrRoot)) ENTRIES = entriesOrRoot || [];
   // 预览模式的数据是整份 JSON，按需模式从空图开始，点开谁取谁
   NODES = LAZY ? {} : DATA.cards || {};
   CALLS = LAZY ? {} : DATA.calls || {};
@@ -827,21 +813,23 @@ async function bootProject(entries) {
   selectedId = null;
   selectedRow = null;
   trail = [];
-  tabs.length = 0;
-  activeTab = -1;
-  if (entrySelect) {
-    entrySelect.remove();
-    entrySelect = null;
+  tabs.clear();
+  activeRoot = null;
+
+  const rootId = Array.isArray(entriesOrRoot)
+    ? (ENTRIES.find(function (e) { return e && e.id; }) || {}).id
+    : entriesOrRoot;
+
+  if (rootId) {
+    loadTab(rootId);
+    roots.add(rootId);
+    await expand(rootId);
+    saveTab();
+    if (window.__clewRootOpened) window.__clewRootOpened(rootId);
+  } else if (window.__clewRootChanged) {
+    window.__clewRootChanged(null);
   }
 
-  // 入口一个都不预建，只把第一个入口展开
-  const first = firstEntryIndex();
-  if (first >= 0) {
-    loadTab(first);
-    roots.add(tabs[first].entryId);
-    await expand(tabs[first].entryId);
-    saveTab();
-  }
   if (window.__CLEW_MARK) {
     window.__CLEW_MARK("first-card");
     requestAnimationFrame(function () {

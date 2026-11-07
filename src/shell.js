@@ -231,6 +231,82 @@
     .w-path{color:#6f737a;font-size:11px;overflow:hidden;text-overflow:ellipsis;
       white-space:nowrap;margin-top:2px}
     .w-hint{color:#6f737a;padding:26px 10px;line-height:1.9}
+
+    /* 顶栏的根按钮 */
+    #root-btn{display:flex;align-items:center;gap:7px;max-width:300px;flex:none;
+      background:#1a2029;border:1px solid var(--bd);border-radius:6px;height:24px;
+      padding:0 9px;cursor:pointer;font:inherit;font-size:12px;color:var(--tx)}
+    #root-btn:hover{border-color:var(--acc);background:#1d2530}
+    #root-btn.open{border-color:var(--acc);box-shadow:0 0 0 2px rgba(88,166,255,.18)}
+    #root-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+      max-width:236px;color:#c6d0da}
+    #root-star{color:#e3b341;opacity:.35;font-size:11px}
+    #root-star.on{opacity:1}
+    .rb-caret{color:var(--dim);font-size:9px}
+
+    /* 入口面板：左栏入口，右栏文件树，两栏各自搜索 */
+    #entry-panel{position:fixed;left:12px;top:88px;width:min(820px,calc(100vw - 24px));
+      height:min(626px,calc(100vh - 108px));
+      background:#161b22;border:1px solid #30363d;border-radius:10px;
+      box-shadow:0 24px 60px #000b;display:flex;flex-direction:column;z-index:60;overflow:hidden}
+    #entry-panel[hidden]{display:none}
+    .ep-cols{display:flex;flex:1;min-height:0}
+    .ep-col-l{flex:0 0 340px;width:340px;max-width:60%;border-right:1px solid #262c34;
+      display:flex;flex-direction:column;min-height:0;background:#141920}
+    .ep-col-r{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+    .ep-head{display:flex;align-items:center;gap:7px;padding:9px 12px 7px;
+      color:#8b95a2;font-size:11px;letter-spacing:.5px;flex:none}
+    .ep-head .n{color:#4a525c}
+    .ep-sf{display:flex;align-items:center;gap:7px;padding:0 12px 8px;
+      border-bottom:1px solid #262c34;flex:none}
+    .ep-sf input{flex:1;min-width:0;background:#1a2029;border:1px solid #2a313a;border-radius:5px;
+      height:24px;padding:0 8px;color:var(--tx);font:inherit;font-size:12px;outline:0}
+    .ep-sf input::placeholder{color:#525b66}
+    .ep-sf input:focus{border-color:#3d4f66;background:#1d2530}
+    .ep-scope{color:#5b6472;font-size:9.5px;white-space:nowrap}
+    .ep-list{overflow:auto;padding:2px 0 6px;flex:1;min-height:0}
+    .ep-list::-webkit-scrollbar{width:9px}
+    .ep-list::-webkit-scrollbar-track{background:transparent}
+    .ep-list::-webkit-scrollbar-thumb{background:#2d333b;border-radius:5px;
+      border:3px solid transparent;background-clip:content-box}
+    .ep-list::-webkit-scrollbar-thumb:hover{background:#4a525c;background-clip:content-box}
+    .ep-sect{padding:7px 12px 3px;display:flex;align-items:center;gap:6px;
+      color:#6b7480;font-size:10.5px;letter-spacing:.6px}
+    .ep-sect .n{color:#4a525c}
+    /* 分组标题里也要能看到命中的那一段，字间距跟着周围走，别单独归零 */
+    .ep-sect b{color:#ffd479;font-weight:600;
+      background:rgba(255,212,121,.10);border-radius:2px}
+    .ep-sect .act{margin-left:auto;color:#5b6472;cursor:pointer;letter-spacing:0;font-size:10px}
+    .ep-sect .act:hover{color:var(--acc)}
+    .ep-grp{display:flex;align-items:center;gap:6px;padding:5px 12px 2px;margin-top:1px;
+      color:#8b95a2;font-size:10.5px;background:#171d24;border-top:1px solid #1e242c;
+      cursor:pointer}
+    .ep-grp .n{color:#4a525c}
+    .ep-grp:hover{background:#1b222c}
+    .ep-node{display:flex;align-items:center;gap:5px;padding:2px 14px 2px 0;cursor:pointer;
+      font-size:12px;white-space:nowrap;border-left:2px solid transparent}
+    .ep-node:hover{background:#1d242e}
+    .ep-node .arw{width:11px;flex:none;color:#5b6472;font-size:9px;text-align:center}
+    .ep-node .ic{width:14px;flex:none;text-align:center;color:#5b6472;font-size:11px}
+    .ep-node.file .ic{color:#58a6ff;opacity:.75}
+    .ep-node.sym .ic{color:#f0883e;opacity:.85}
+    .ep-node .nm{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+    .ep-node .tail{display:flex;align-items:center;gap:7px;flex:none;margin-left:auto}
+    .ep-node .ln,.ep-node .cnt{flex:none;color:#4a525c;font-size:10px}
+    .ep-node .flag{flex:none;color:#3c454f;padding:2px 3px;border-radius:3px;
+      display:inline-flex;align-items:center;gap:3px;line-height:0}
+    .ep-node:hover .flag{color:#8b95a2}
+    .ep-node .flag.on{color:#e3b341}
+    .ep-node .flag:hover{background:#2b2416;color:#ffd479}
+    .ep-node .flag svg{display:block}
+    .ep-node b{color:#ffd479;font-weight:600;background:rgba(255,212,121,.10);border-radius:2px}
+    .ep-dot{width:5px;height:5px;border-radius:3px;background:#f0883e;flex:none;opacity:.8}
+    .ep-empty{padding:8px 12px;color:#5f6874;font-size:11.5px}
+    .ep-left .ep-node .ln{max-width:94px;overflow:hidden;text-overflow:ellipsis}
+    .ep-foot{border-top:1px solid #262c34;padding:6px 12px;color:#4a525c;font-size:10.5px;
+      display:flex;gap:14px;flex:none;background:#141920}
+    .ep-foot .k{color:#6b7480}
+    .ep-foot .right{margin-left:auto;color:#e3b341}
   `;
   document.head.appendChild(style);
 
@@ -688,7 +764,6 @@
 
   // ── 标题栏 ──────────────────────────────────────────────────────
   const top = document.getElementById("top");
-  const entriesBox = document.getElementById("entries");
   const trail = document.getElementById("trail");
 
   const brand = document.createElement("span");
@@ -723,9 +798,12 @@
   const status = document.createElement("span");
   status.className = "tb-status";
 
-  const entryLabel = document.createElement("span");
-  entryLabel.textContent = "入口";
-  entryLabel.style.color = "var(--dim)";
+  const rootBtn = document.createElement("button");
+  rootBtn.id = "root-btn";
+  rootBtn.title = "选择从这个函数开始读";
+  rootBtn.innerHTML =
+    '<span id="root-star">★</span><span id="root-name">未选择入口</span>' +
+    '<span class="rb-caret">▾</span>';
 
   const row1 = document.createElement("div");
   row1.id = "tb-row1";
@@ -773,12 +851,7 @@
   const row2 = document.createElement("div");
   row2.id = "tb-row2";
   row2.dataset.tauriDragRegion = "";
-  row2.appendChild(entryLabel);
-  row2.appendChild(entriesBox);
-  const sep = document.createElement("span");
-  sep.textContent = "|";
-  sep.style.color = "var(--dim)";
-  row2.appendChild(sep);
+  row2.appendChild(rootBtn);
   row2.appendChild(trail);
   row2.appendChild(status);
 
@@ -1212,7 +1285,7 @@
     } catch (err) {
       setStatus(String(err), true);
       setNote(String(err), true);
-      if (typeof tabs !== "undefined" && tabs.length === 0) showWelcome();
+      if (typeof tabs !== "undefined" && tabs.size === 0) showWelcome();
     }
   }
 
@@ -1308,6 +1381,541 @@
       showWelcome();
     }
   }
+
+  // ── 入口面板 ────────────────────────────────────────────────────
+  // 左栏是入口（自定义 / 最近 / 扫描到的），右栏是文件树。两栏各有一个
+  // 输入框，作用域分开：左边只在入口里找，右边找全项目。
+  const FLAG_SVG =
+    '<svg viewBox="0 0 12 12" width="12" height="12" ' +
+    'style="position:static;inset:auto;width:12px;height:12px;display:block">' +
+    '<path d="M2.2 1.1v9.8" stroke="currentColor" stroke-width="1.1" fill="none"/>' +
+    '<path d="M2.2 2h7.3L7.7 4.2l1.8 2.2H2.2z" fill="currentColor"/></svg>';
+
+  // 面板里的图标统一从这里出，尺寸写成 inline，免得被页面那条 svg 全局规则撑开
+  function panelIcon(body) {
+    return (
+      '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" ' +
+      'style="position:static;inset:auto;width:12px;height:12px;display:block">' +
+      body +
+      "</svg>"
+    );
+  }
+  const ICON_FOLDER =
+    panelIcon('<path d="M1.5 3.3h3.1l1 1.2h4.9v5.9H1.5z"/>');
+  const ICON_FOLDER_OPEN =
+    panelIcon('<path d="M1.5 3.3h3.1l1 1.2h4.9v1.2H1.5z"/><path d="M1.5 5.7h9.4l-1.3 4.7H1.5z"/>');
+  const ICON_FILE =
+    panelIcon('<path d="M3.1 1.6h3.4l2.4 2.4v6.4H3.1z"/><path d="M6.5 1.6v2.4h2.4"/>');
+
+  const panel = document.createElement("div");
+  panel.id = "entry-panel";
+  panel.hidden = true;
+  panel.innerHTML =
+    '<div class="ep-cols">' +
+      '<div class="ep-col-l ep-left">' +
+        '<div class="ep-head">入口<span class="n" id="ep-entry-count"></span></div>' +
+        '<div class="ep-sf"><input id="ep-ql" placeholder="过滤入口" autocomplete="off">' +
+          '<span class="ep-scope">仅入口</span></div>' +
+        '<div class="ep-list" id="ep-left-list"></div>' +
+      "</div>" +
+      '<div class="ep-col-r">' +
+        '<div class="ep-head">文件<span class="n" id="ep-file-count"></span></div>' +
+        '<div class="ep-sf"><input id="ep-qr" placeholder="搜索文件或函数" autocomplete="off">' +
+          '<span class="ep-scope">全项目</span></div>' +
+        '<div class="ep-list" id="ep-right-list"></div>' +
+      "</div>" +
+    "</div>" +
+    '<div class="ep-foot">' +
+      '<span><span class="k">↵</span> 设为根</span>' +
+      '<span><span class="k">⚑</span> 标记入口</span>' +
+      '<span class="right" id="ep-marked"></span>' +
+    "</div>";
+  document.body.appendChild(panel);
+
+  const ql = panel.querySelector("#ep-ql");
+  const qr = panel.querySelector("#ep-qr");
+  const leftList = panel.querySelector("#ep-left-list");
+  const rightList = panel.querySelector("#ep-right-list");
+
+  let panelOpen = false;
+  let fileCache = null;              // files() 的结果，懒加载一次
+  let fileByModule = new Map();      // module -> FileRow
+  let symCache = new Map();          // module -> SymbolRow[]
+  let rootData = { favorites: [], recent: [] };
+  let searchSeq = 0;
+  const openDirs = new Set();
+  const openFiles = new Set();
+  const openGroups = new Set();
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function hl(text, q) {
+    if (!q) return esc(text);
+    const i = text.toLowerCase().indexOf(q.toLowerCase());
+    if (i < 0) return esc(text);
+    return esc(text.slice(0, i)) + "<b>" + esc(text.slice(i, i + q.length)) + "</b>" +
+      esc(text.slice(i + q.length));
+  }
+  function splitId(id) {
+    const i = id.indexOf(":");
+    return i < 0
+      ? { module: id, qualname: id }
+      : { module: id.slice(0, i), qualname: id.slice(i + 1) };
+  }
+  function shortName(id) {
+    const parts = splitId(id);
+    // 模块体没有函数名，用模块最后一段当名字，避免出现在一长串 "<module>"
+    if (parts.qualname === "<module>") {
+      return parts.module.split(".").pop() || parts.module;
+    }
+    return parts.qualname.split(".").pop() || parts.qualname;
+  }
+  function fileNameOf(module) {
+    const f = fileByModule.get(module);
+    if (f) return f.path.split("/").pop();
+    return (module.split(".").pop() || module) + ".py";
+  }
+  function scannedEntries() {
+    return (typeof ENTRIES !== "undefined" ? ENTRIES : []).filter((e) => e && e.id);
+  }
+
+  // 一行入口：名字、文件、旗标
+  function entryRow(id, q) {
+    const star = rootData.favorites.indexOf(id) >= 0;
+    const isEntry = scannedEntries().some((e) => e.id === id);
+    return (
+      '<div class="ep-node sym" data-root="' + esc(id) + '" style="padding-left:12px">' +
+        '<span class="ic">\u0192</span>' +
+        '<span class="nm">' + hl(shortName(id), q) + "</span>" +
+        (isEntry ? '<span class="ep-dot" title="扫描器认定的入口"></span>' : "") +
+        '<span class="tail">' +
+          '<span class="ln">' + esc(fileNameOf(splitId(id).module)) + "</span>" +
+          '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(id) +
+            '" title="标记入口">' + FLAG_SVG + "</span>" +
+        "</span>" +
+      "</div>"
+    );
+  }
+
+  function scanGroups(rows) {
+    const groups = new Map();
+    rows.forEach((r) => {
+      const top = splitId(r.id).module.split(".")[0] || "其他";
+      if (!groups.has(top)) groups.set(top, []);
+      groups.get(top).push(r);
+    });
+    return groups;
+  }
+
+  function renderLeft(raw) {
+    const q = (raw || "").trim();
+    const key = q.toLowerCase();
+    const match = (id) => shortName(id).toLowerCase().indexOf(key) >= 0;
+
+    const favs = rootData.favorites.filter((id) => !key || match(id));
+    const recent = rootData.recent.filter(
+      (id) => rootData.favorites.indexOf(id) < 0 && (!key || match(id))
+    );
+    const scanned = scannedEntries().filter((e) => !key || match(e.id));
+
+    // 左侧只在自己的入口集合里找，不碰全项目
+    let html = '<div class="ep-sect">自定义入口<span class="n">' +
+      (key ? favs.length + "/" + rootData.favorites.length : rootData.favorites.length) +
+      "</span></div>";
+    html += favs.length
+      ? favs.map((id) => entryRow(id, q)).join("")
+      : '<div class="ep-empty">' +
+        (key ? "没有匹配" : "在右栏给函数按 ⚑ 就会出现在这里") + "</div>";
+
+    if (recent.length) {
+      html += '<div class="ep-sect">最近</div>' + recent.map((id) => entryRow(id, q)).join("");
+    }
+
+    if (scanned.length) {
+      html += '<div class="ep-sect">扫描入口<span class="n">' +
+        (key ? scanned.length + "/" + scannedEntries().length : scannedEntries().length) +
+        "</span></div>";
+      const groups = scanGroups(scanned);
+      groups.forEach((rows, name) => {
+        const open = key ? true : openGroups.has(name);
+        html += '<div class="ep-grp" data-group="' + esc(name) + '"><span>' +
+          (open ? "▾" : "▸") + "</span>" + esc(name) +
+          '<span class="n">' + rows.length + "</span></div>";
+        if (open) html += rows.map((r) => entryRow(r.id, q)).join("");
+      });
+    }
+
+    leftList.innerHTML = html;
+    panel.querySelector("#ep-entry-count").textContent =
+      String(rootData.favorites.length + scannedEntries().length);
+  }
+
+  // 右栏文件树
+  function buildTree(rows) {
+    const root = { dirs: new Map(), files: [] };
+    rows.forEach((r) => {
+      const parts = r.path.split("/");
+      const name = parts.pop();
+      let node = root;
+      let prefix = "";
+      parts.forEach((p) => {
+        prefix = prefix ? prefix + "/" + p : p;
+        if (!node.dirs.has(p)) node.dirs.set(p, { path: prefix, dirs: new Map(), files: [] });
+        node = node.dirs.get(p);
+      });
+      node.files.push({ name: name, row: r });
+    });
+    return root;
+  }
+
+  function dirRow(node, depth, name, q) {
+    const open = openDirs.has(node.path);
+    return (
+      '<div class="ep-node" data-dir="' + esc(node.path) + '" style="padding-left:' +
+        (depth * 14 + 8) + 'px">' +
+        '<span class="arw">' + (open ? "▾" : "▸") + "</span>" +
+        '<span class="ic">' + (open ? ICON_FOLDER_OPEN : ICON_FOLDER) + "</span>" +
+        '<span class="nm">' + hl(name, q) + "</span>" +
+        '<span class="tail"><span class="cnt">' + countFiles(node) + "</span></span></div>"
+    );
+  }
+  function countFiles(node) {
+    let n = node.files.length;
+    node.dirs.forEach((d) => { n += countFiles(d); });
+    return n;
+  }
+
+  function fileRow(row, depth, q) {
+    const open = openFiles.has(row.module);
+    return (
+      '<div class="ep-node file" data-file="' + esc(row.module) + '" style="padding-left:' +
+        (depth * 14 + 8) + 'px">' +
+        '<span class="arw">' + (open ? "▾" : "▸") + "</span>" +
+        '<span class="ic">' + ICON_FILE + "</span>" +
+        '<span class="nm">' + hl(row.path.split("/").pop(), q) + "</span>" +
+        (row.has_main_guard ? '<span class="ep-dot" title="有 __main__ 块"></span>' : "") +
+        '<span class="tail"><span class="cnt">' + row.symbols + "</span></span></div>"
+    );
+  }
+
+  function symRow(s, depth, q) {
+    const star = rootData.favorites.indexOf(s.card_id) >= 0;
+    const isCls = s.kind === "class";
+    return (
+      '<div class="ep-node sym" data-root="' + esc(s.card_id) + '" style="padding-left:' +
+        (depth * 14 + 8) + 'px">' +
+        '<span class="arw"></span>' +
+        '<span class="ic">' + (isCls ? "C" : "\u0192") + "</span>" +
+        '<span class="nm">' + hl(shortName(s.card_id), q) + "</span>" +
+        (s.is_entry ? '<span class="ep-dot" title="扫描器认定的入口"></span>' : "") +
+        '<span class="tail">' +
+          '<span class="ln">L' + s.def_line + "</span>" +
+          '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(s.card_id) +
+            '" title="标记入口">' + FLAG_SVG + "</span>" +
+        "</span>" +
+      "</div>"
+    );
+  }
+
+  function renderTree(q) {
+    const tree = buildTree(fileCache || []);
+    const out = [];
+    (function walk(node, depth) {
+      node.dirs.forEach((child, name) => {
+        out.push(dirRow(child, depth, name, q));
+        if (openDirs.has(child.path)) walk(child, depth + 1);
+      });
+      node.files.forEach((f) => {
+        out.push(fileRow(f.row, depth, q));
+        if (openFiles.has(f.row.module)) {
+          (symCache.get(f.row.module) || []).forEach((s) =>
+            out.push(symRow(s, depth + 1, q))
+          );
+        }
+      });
+    })(tree, 0);
+    rightList.innerHTML = out.join("") || '<div class="ep-empty">这个项目没有 Python 文件</div>';
+    panel.querySelector("#ep-file-count").textContent = String((fileCache || []).length);
+  }
+
+  // 搜索结果：名字命中的文件只列命中的定义，文件命中的才把整个文件铺开
+  function renderHits(groups, q) {
+    if (!groups.length) {
+      rightList.innerHTML = '<div class="ep-empty">没有匹配的文件或函数</div>';
+      return;
+    }
+    const out = [];
+    groups.forEach((g) => {
+      out.push(
+        '<div class="ep-sect" style="padding-top:6px">' + hl(g.path, q) + "</div>"
+      );
+      g.symbols.forEach((s) => out.push(symRow(s, 1, q)));
+    });
+    rightList.innerHTML = out.join("");
+  }
+
+  // 同一时刻只让一个搜索在跑。按键连打时后端要拿索引的锁，排队会让界面
+  // 越来越慢，这里只留住最后一次输入，上一趟回来再发。
+  let searchBusy = false;
+  let searchPending = null;
+
+  async function runSearch(q) {
+    if (searchBusy) {
+      searchPending = q;
+      return;
+    }
+    searchBusy = true;
+    const seq = ++searchSeq;
+    try {
+      const groups = await api.invoke("search", { q: q, limit: 200 });
+      if (seq === searchSeq) renderHits(groups, q);
+    } catch (err) {
+      if (seq === searchSeq) {
+        rightList.innerHTML = '<div class="ep-empty">' + esc(String(err)) + "</div>";
+      }
+    } finally {
+      searchBusy = false;
+      if (searchPending) {
+        const next = searchPending;
+        searchPending = null;
+        runSearch(next);
+      }
+    }
+  }
+
+  let searchTimer = null;
+  qr.addEventListener("input", function () {
+    clearTimeout(searchTimer);
+    const v = qr.value;
+    searchTimer = setTimeout(function () {
+      if (!desktop) return;
+      if (v.trim()) runSearch(v.trim());
+      else renderTree("");
+    }, 200);
+  });
+  ql.addEventListener("input", function () { renderLeft(ql.value); });
+
+  async function ensureSymbols(module) {
+    if (symCache.has(module)) return symCache.get(module);
+    let rows = [];
+    try {
+      rows = await api.invoke("symbols_in", { module: module });
+    } catch (err) {
+      rows = [];
+    }
+    symCache.set(module, rows);
+    return rows;
+  }
+
+  async function openEntryPanel() {
+    if (panelOpen) return;
+    panelOpen = true;
+    panel.hidden = false;
+    rootBtn.classList.add("open");
+    if (desktop && currentPath) {
+      try {
+        rootData = await api.invoke("roots", { project: currentPath, action: "get" });
+      } catch (err) {
+        rootData = { favorites: [], recent: [] };
+      }
+      if (!fileCache) {
+        try {
+          fileCache = await api.invoke("files");
+        } catch (err) {
+          fileCache = [];
+        }
+        fileByModule = new Map();
+        (fileCache || []).forEach((f) => fileByModule.set(f.module, f));
+      }
+    } else {
+      fileCache = [];
+    }
+    renderLeft(ql.value);
+    if (!desktop) {
+      rightList.innerHTML = '<div class="ep-empty">预览模式只有入口列表，文件树要在桌面端看</div>';
+    } else {
+      // 第一次打开只展开第一组，其余收着，点哪组才展哪组
+      if (!openGroups.size) {
+        const first = scanGroups(scannedEntries()).keys().next();
+        if (!first.done) openGroups.add(first.value);
+      }
+      renderTree("");
+    }
+    updateMarked();
+    qr.focus();
+  }
+
+  function closeEntryPanel() {
+    panelOpen = false;
+    panel.hidden = true;
+    rootBtn.classList.remove("open");
+  }
+
+  function updateMarked() {
+    panel.querySelector("#ep-marked").textContent =
+      "已标记 " + rootData.favorites.length + " 个入口";
+  }
+
+  async function chooseRoot(id) {
+    closeEntryPanel();
+    if (typeof window.openRoot === "function") await window.openRoot(id);
+  }
+
+  async function toggleFavorite(id) {
+    if (!desktop || !currentPath) return;
+    try {
+      rootData = await api.invoke("roots", {
+        project: currentPath,
+        action: "toggle",
+        cardId: id,
+      });
+    } catch (err) {
+      return;
+    }
+    renderLeft(ql.value);
+    if (qr.value.trim()) runSearch(qr.value.trim());
+    else renderTree("");
+    updateMarked();
+    window.__clewRootChanged(window.getActiveRoot ? window.getActiveRoot() : null);
+    if (window.__clewRefreshCard) window.__clewRefreshCard(id);
+  }
+
+  // 卡片头上的旗标按钮走这两个口
+  window.__clewIsFavorite = function (id) {
+    return !!id && rootData.favorites.indexOf(id) >= 0;
+  };
+  window.__clewToggleFavorite = function (id) {
+    return toggleFavorite(id);
+  };
+
+  panel.addEventListener("click", async function (e) {
+    const fav = e.target.closest("[data-fav]");
+    if (fav) {
+      e.stopPropagation();
+      await toggleFavorite(fav.dataset.fav);
+      return;
+    }
+    const root = e.target.closest("[data-root]");
+    if (root) {
+      await chooseRoot(root.dataset.root);
+      return;
+    }
+    const group = e.target.closest("[data-group]");
+    if (group) {
+      const g = group.dataset.group;
+      // 手风琴：同一时刻只展开一组。点已展开的就全部收起。
+      // 搜索态里分组是强制展开的，点组头先退出搜索。
+      if (ql.value.trim()) {
+        ql.value = "";
+        openGroups.clear();
+        openGroups.add(g);
+        renderLeft("");
+        return;
+      }
+      const wasOpen = openGroups.has(g);
+      openGroups.clear();
+      if (!wasOpen) openGroups.add(g);
+      renderLeft(ql.value);
+      return;
+    }
+    const file = e.target.closest("[data-file]");
+    if (file) {
+      const module = file.dataset.file;
+      if (openFiles.has(module)) {
+        openFiles.delete(module);
+      } else {
+        openFiles.add(module);
+        await ensureSymbols(module);
+      }
+      renderTree(qr.value.trim());
+      return;
+    }
+    const dir = e.target.closest("[data-dir]");
+    if (dir) {
+      const p = dir.dataset.dir;
+      openDirs.has(p) ? openDirs.delete(p) : openDirs.add(p);
+      renderTree(qr.value.trim());
+    }
+  });
+
+  [ql, qr].forEach(function (input) {
+    input.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const scope = input === ql ? leftList : rightList;
+      const first = scope.querySelector("[data-root]");
+      if (first) chooseRoot(first.dataset.root);
+    });
+  });
+
+  rootBtn.addEventListener("click", function () {
+    panelOpen ? closeEntryPanel() : openEntryPanel();
+  });
+  document.addEventListener("mousedown", function (e) {
+    if (!panelOpen) return;
+    if (panel.contains(e.target) || rootBtn.contains(e.target)) return;
+    closeEntryPanel();
+  });
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      panelOpen ? closeEntryPanel() : openEntryPanel();
+    }
+    if (e.key === "Escape" && panelOpen) closeEntryPanel();
+  });
+
+  // app.js 在切根和打开根之后回调这里，顶栏按钮跟着变
+  window.__clewRootChanged = function (rootId) {
+    document.getElementById("root-name").textContent = rootId || "未选择入口";
+    document.getElementById("root-name").title = rootId || "";
+    const star = document.getElementById("root-star");
+    star.classList.toggle("on", !!rootId && rootData.favorites.indexOf(rootId) >= 0);
+  };
+  window.__clewRootOpened = function (rootId) {
+    if (!desktop || !currentPath || !rootId) return;
+    api.invoke("roots", { project: currentPath, action: "recent", cardId: rootId })
+      .then(function (data) {
+        rootData = data;
+        window.__clewRootChanged(rootId);
+        updateMarked();
+      })
+      .catch(function () {});
+  };
+
+  // app.js 先加载，它开根的时候这个回调还没定义，这里补一次同步
+  if (typeof window.getActiveRoot === "function") {
+    window.__clewRootChanged(window.getActiveRoot());
+  }
+
+  // 启动时先把收藏读出来，卡片头上的旗标才有正确的初始状态
+  if (desktop && currentPath) {
+    api.invoke("roots", { project: currentPath, action: "get" })
+      .then(function (d) {
+        rootData = d;
+        window.__clewRootChanged(window.getActiveRoot());
+      })
+      .catch(function () {});
+  }
+
+  // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
+  window.__clewPanel = {
+    open: openEntryPanel,
+    close: closeEntryPanel,
+    left: renderLeft,
+    tree: renderTree,
+    hits: renderHits,
+    setFiles: function (rows) {
+      fileCache = rows || [];
+      fileByModule = new Map();
+      fileCache.forEach(function (f) { fileByModule.set(f.module, f); });
+      symCache = new Map();
+    },
+    setRoots: function (d) {
+      rootData = d || { favorites: [], recent: [] };
+    },
+  };
 
   window.clewShell = {
     openPath: openPath,

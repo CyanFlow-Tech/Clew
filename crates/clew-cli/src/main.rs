@@ -55,6 +55,34 @@ enum Command {
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
     },
+    /// List every indexed file, the way the entry panel's file tree sees them
+    Files {
+        /// Project root
+        project: PathBuf,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
+    /// List the definitions of one file
+    Symbols {
+        /// Project root
+        project: PathBuf,
+        /// Module name, e.g. `pkg.sub.mod`
+        module: String,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
+    /// Search definitions; a file-name hit lists that file's definitions
+    Find {
+        /// Project root
+        project: PathBuf,
+        /// Search text
+        q: String,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
     /// Walk the call graph from an entry point
     Walk {
         /// Project root
@@ -196,6 +224,77 @@ fn main() -> anyhow::Result<()> {
                 );
             }
             println!("\n{} entry points", rows.len());
+        }
+        Command::Files { project, db } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let mut rows = clew_core::walk::files(&conn, project_id)?;
+            for r in rows.iter_mut() {
+                r.path = clew_core::walk::rel_path(&root, &r.path);
+            }
+
+            let width = rows.iter().map(|r| r.path.len()).max().unwrap_or(0);
+            println!("{:<width$}  {:>6}  {:<4} {}", "path", "syms", "main", "module", width = width);
+            for r in &rows {
+                println!(
+                    "{:<width$}  {:>6}  {:<4} {}",
+                    r.path,
+                    r.symbols,
+                    if r.has_main_guard { "yes" } else { "" },
+                    r.module,
+                    width = width
+                );
+            }
+            let third = rows.iter().filter(|r| r.is_third_party).count();
+            println!("\n{} files ({third} third party)", rows.len());
+        }
+        Command::Symbols { project, module, db } => {
+            let root = project.canonicalize()?;
+            let (conn, _project_id) = open_index(&root, db)?;
+            let rows = clew_core::walk::symbols_in(&conn, &module)?;
+            if rows.is_empty() {
+                println!("no symbols in {module}");
+                return Ok(());
+            }
+            println!("{:<5}  {:<8}  {:<40}  {:>5}  {}", "line", "kind", "qualname", "fanin", "entry");
+            for r in &rows {
+                println!(
+                    "{:<5}  {:<8}  {:<40}  {:>5}  {}",
+                    r.def_line,
+                    r.kind,
+                    r.qualname,
+                    r.fanin,
+                    r.entry_confidence.clone().unwrap_or_default()
+                );
+            }
+            println!("\n{} symbols in {module}", rows.len());
+        }
+        Command::Find { project, q, db } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let mut rows = clew_core::walk::search(&conn, project_id, &q, 200)?;
+            for g in rows.iter_mut() {
+                g.path = clew_core::walk::rel_path(&root, &g.path);
+            }
+            if rows.is_empty() {
+                println!("no hits for {q}");
+                return Ok(());
+            }
+            println!("{:<5}  {:<8}  {:<44}  {}", "line", "kind", "qualname", "file");
+            for g in &rows {
+                println!("{}  ({})", g.path, if g.by_file { "文件命中" } else { "名字命中" });
+                for r in &g.symbols {
+                    println!(
+                        "{:<5}  {:<8}  {:<44}  {}",
+                        r.def_line,
+                        r.kind,
+                        r.qualname,
+                        g.module
+                    );
+                }
+            }
+            let n: usize = rows.iter().map(|g| g.symbols.len()).sum();
+            println!("\n{} hits in {} files for {q}", n, rows.len());
         }
         Command::Stats { project, db } => {
             let root = project.canonicalize()?;

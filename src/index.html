@@ -47,6 +47,8 @@
   .head .btn{background:#262c34;border:1px solid var(--bd);border-radius:3px;padding:0 5px;
     font-size:10px;color:var(--dim);cursor:pointer}
   .head .btn:hover{color:var(--acc);border-color:var(--acc)}
+  .head .btn.pin{font-size:11px;padding:0 4px}
+  .head .btn.pin.on{color:var(--sel);border-color:#6b5a1f;background:#2a2313}
   .head .btn.close:hover{color:#f85149;border-color:#f85149}
   .head .hub{background:var(--call);color:#14171c;border-radius:3px;padding:0 4px;font-size:9px}
   .kindbadge{background:#2d333b;color:var(--dim);border-radius:3px;padding:0 4px;font-size:9px}
@@ -105,8 +107,7 @@
 </style>
 </head>
 <body>
-<div id="top"><b>真实项目</b><span style="color:var(--dim)">入口</span><span id="entries"></span>
-  <span style="color:var(--dim)">|</span><div id="trail"></div></div>
+<div id="top"><b>真实项目</b><div id="trail"></div></div>
 <div id="graph"><div id="world"><svg id="edges"></svg></div></div>
 <div id="bubble"></div>
 <div id="focus"></div>

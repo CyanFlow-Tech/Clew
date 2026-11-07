@@ -2,6 +2,7 @@
 
 //! Tauri shell: the frontend reads the index through these commands only.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,8 +13,8 @@ use clew_core::scan::progress::Progress;
 use clew_core::snapshot::{self, CardsPayload, Entry};
 use clew_core::store::{self, Conn, repo};
 use clew_core::walk;
-use serde::Serialize;
-use tauri::State;
+use serde::{Deserialize, Serialize};
+use tauri::{Manager, State};
 
 /// Process start, so every stage can print an absolute offset from launch.
 static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -460,6 +461,119 @@ fn ready(window: tauri::WebviewWindow) -> Result<(), String> {
     window.show().map_err(|e| e.to_string())
 }
 
+/// 项目里所有被索引的文件，入口面板左栏的文件树用它。
+#[tauri::command]
+fn files(state: State<'_, AppState>) -> Result<Vec<walk::FileRow>, String> {
+    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let index = index_or(&guard)?;
+    let mut rows = walk::files(index.mat.conn(), index.project_id).map_err(|e| e.to_string())?;
+    for r in rows.iter_mut() {
+        r.path = walk::rel_path(&index.root, &r.path);
+    }
+    Ok(rows)
+}
+
+/// 一个文件里的全部定义，按行号排序。
+#[tauri::command]
+fn symbols_in(module: String, state: State<'_, AppState>) -> Result<Vec<walk::SymbolRow>, String> {
+    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let index = index_or(&guard)?;
+    walk::symbols_in(index.mat.conn(), &module).map_err(|e| e.to_string())
+}
+
+fn index_or(guard: &Option<Index>) -> Result<&Index, String> {
+    guard.as_ref().ok_or_else(|| "还没有打开项目".to_string())
+}
+
+/// 入口面板的搜索：命中文件名会列出该文件的全部定义，命中定义名只列命中的。
+#[tauri::command]
+fn search(
+    q: String,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<walk::SearchFile>, String> {
+    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let index = index_or(&guard)?;
+    let mut rows = walk::search(index.mat.conn(), index.project_id, &q, limit.unwrap_or(200))
+        .map_err(|e| e.to_string())?;
+    for r in rows.iter_mut() {
+        r.path = walk::rel_path(&index.root, &r.path);
+    }
+    Ok(rows)
+}
+
+/// 用户自己的入口：收藏与最近打开，存在应用数据目录，不跟索引一起删。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProjectRoots {
+    #[serde(default)]
+    favorites: Vec<String>,
+    #[serde(default)]
+    recent: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct RootsFile {
+    #[serde(default)]
+    projects: BTreeMap<String, ProjectRoots>,
+}
+
+fn roots_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("找不到应用数据目录：{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("roots.json"))
+}
+
+fn read_roots(app: &tauri::AppHandle) -> Result<RootsFile, String> {
+    let path = roots_path(app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("roots.json 读不出来：{e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(RootsFile::default()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn write_roots(app: &tauri::AppHandle, data: &RootsFile) -> Result<(), String> {
+    let path = roots_path(app)?;
+    let text = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn roots(
+    app: tauri::AppHandle,
+    project: String,
+    action: String,
+    card_id: Option<String>,
+) -> Result<ProjectRoots, String> {
+    let mut data = read_roots(&app)?;
+    let entry = data.projects.entry(project).or_default();
+
+    match action.as_str() {
+        "toggle" => {
+            let id = card_id.ok_or("缺少 card_id")?;
+            if let Some(pos) = entry.favorites.iter().position(|x| *x == id) {
+                entry.favorites.remove(pos);
+            } else {
+                entry.favorites.push(id);
+            }
+        }
+        "recent" => {
+            let id = card_id.ok_or("缺少 card_id")?;
+            entry.recent.retain(|x| *x != id);
+            entry.recent.insert(0, id);
+            entry.recent.truncate(12);
+        }
+        _ => {}
+    }
+
+    let out = entry.clone();
+    write_roots(&app, &data)?;
+    Ok(out)
+}
+
 fn main() {
     START.set(Instant::now()).ok();
     eprintln!("[t] main starts");
@@ -475,6 +589,10 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             ready,
+            files,
+            symbols_in,
+            search,
+            roots,
             open_project,
             boot,
             scan_status,

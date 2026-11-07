@@ -4,6 +4,7 @@
 //! both read the same shapes, so resolution never has to run twice.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -215,6 +216,282 @@ pub fn node(conn: &Connection, id: i64) -> rusqlite::Result<Option<NodeView>> {
         builtin_calls,
         unresolved_calls,
     }))
+}
+
+/// One file of the project, as the entry panel lists it.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileRow {
+    pub module: String,
+    pub path: String,
+    pub is_third_party: bool,
+    pub has_main_guard: bool,
+    pub symbols: i64,
+}
+
+/// One definition inside a file, as the entry panel lists it.
+#[derive(Debug, Clone, Serialize)]
+pub struct SymbolRow {
+    pub card_id: String,
+    pub module: String,
+    pub qualname: String,
+    pub kind: String,
+    pub def_line: i64,
+    pub is_entry: bool,
+    pub entry_confidence: Option<String>,
+    pub params: Vec<String>,
+    /// How many call sites in the project reach this symbol.
+    pub fanin: i64,
+}
+
+/// One hit of the entry panel search, grouped by file.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchFile {
+    pub module: String,
+    pub path: String,
+    /// 文件名命中了，所以这里列的是整个文件的定义，不是只列名字命中的那些
+    pub by_file: bool,
+    pub symbols: Vec<SymbolRow>,
+}
+
+/// 面板里显示的路径一律相对项目根，用正斜杠。root 和 path 都可能带 Windows
+/// 的 `\\?\` 前缀，先统一剥掉再比，否则 strip_prefix 永远失败，树就从盘符开始了。
+pub fn rel_path(root: &Path, path: &str) -> String {
+    fn norm(s: &str) -> String {
+        s.trim_start_matches(r"\\?\").replace('\\', "/")
+    }
+    let root = norm(&root.to_string_lossy());
+    let p = norm(path);
+    let rest = p
+        .strip_prefix(root.trim_end_matches('/'))
+        .unwrap_or(&p)
+        .trim_start_matches('/');
+    if rest.is_empty() {
+        p.trim_start_matches('/').to_string()
+    } else {
+        rest.to_string()
+    }
+}
+
+/// Every indexed file of a project, ordered by path.
+pub fn files(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec<FileRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.module, m.path, m.is_third_party, m.has_main_guard,
+                (SELECT count(*) FROM symbol s
+                  WHERE s.project_id = m.project_id AND s.module = m.module)
+           FROM module m
+          WHERE m.project_id = ?1
+          ORDER BY m.path",
+    )?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        let path: String = row.get(1)?;
+        Ok(FileRow {
+            module: row.get(0)?,
+            path: path.trim_start_matches(r"\\?\").to_string(),
+            is_third_party: row.get::<_, i64>(2)? != 0,
+            has_main_guard: row.get::<_, i64>(3)? != 0,
+            symbols: row.get(4)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Every definition of one file, in source order.
+pub fn symbols_in(conn: &Connection, module: &str) -> rusqlite::Result<Vec<SymbolRow>> {
+    symbols_of(conn, module, true)
+}
+
+/// 搜索时不需要参数表，少一次 per-symbol 的查询，不然大项目上每次按键都要
+/// 对上万个符号各跑一条 SQL。
+fn symbols_of(
+    conn: &Connection,
+    module: &str,
+    with_params: bool,
+) -> rusqlite::Result<Vec<SymbolRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.qualname, s.kind, s.def_line, s.is_entry, s.entry_confidence,
+                (SELECT count(*) FROM call_site c WHERE c.dst_symbol = s.id)
+           FROM symbol s
+          WHERE s.module = ?1
+          ORDER BY s.def_line, s.qualname",
+    )?;
+    let mut out = Vec::new();
+    for row in stmt.query_map(params![module], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)? != 0,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, i64>(6)?,
+        ))
+    })? {
+        let (id, qualname, kind, def_line, is_entry, entry_confidence, fanin) = row?;
+        let params_list = if with_params {
+            let mut pstmt =
+                conn.prepare("SELECT name FROM card_param WHERE symbol_id = ?1 ORDER BY ord")?;
+            pstmt
+                .query_map(params![id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        } else {
+            Vec::new()
+        };
+        out.push(SymbolRow {
+            card_id: format!("{module}:{qualname}"),
+            module: module.to_string(),
+            qualname,
+            kind,
+            def_line,
+            is_entry,
+            entry_confidence,
+            params: params_list,
+            fanin,
+        });
+    }
+    Ok(out)
+}
+
+/// Search the entry panel: a file name match lists every definition in that
+/// file, a definition name match lists just those definitions.
+pub fn search(
+    conn: &Connection,
+    project_id: i64,
+    needle: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<SearchFile>> {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return Ok(Vec::new());
+    }
+    let like = format!("%{needle}%");
+    let low = needle.to_lowercase();
+    let limit = limit.max(1);
+
+    // 名字命中的上限，防止一个短词把整个项目的符号都拉进来
+    const NAME_LIMIT: usize = 300;
+    // 文件命中最多展开这么多个文件，每个文件都要查一遍它的定义
+    const FILE_LIMIT: usize = 30;
+
+    // 先用名字命中建组，这样它排在前面，而且同一个文件里没命中的函数不会被带进来
+    let mut groups: Vec<SearchFile> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+
+    let mut name_stmt = conn.prepare(
+        "SELECT s.module, COALESCE(m.path, ''), s.qualname, s.kind, s.def_line,
+                s.is_entry, s.entry_confidence,
+                (SELECT count(*) FROM call_site c WHERE c.dst_symbol = s.id)
+           FROM symbol s
+           LEFT JOIN module m ON m.project_id = s.project_id AND m.module = s.module
+          WHERE s.project_id = ?1 AND s.qualname LIKE ?2
+          ORDER BY s.def_line, s.qualname
+          LIMIT ?3",
+    )?;
+    let rows = name_stmt.query_map(params![project_id, like, NAME_LIMIT as i64], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, i64>(5)? != 0,
+            row.get::<_, Option<String>>(6)?,
+            row.get::<_, i64>(7)?,
+        ))
+    })?;
+    for row in rows {
+        let (module, path, qualname, kind, def_line, is_entry, confidence, fanin) = row?;
+        let symbol = SymbolRow {
+            card_id: format!("{module}:{qualname}"),
+            module: module.clone(),
+            qualname,
+            kind,
+            def_line,
+            is_entry,
+            entry_confidence: confidence,
+            params: Vec::new(),
+            fanin,
+        };
+        let path = path.trim_start_matches(r"\\?\").to_string();
+        match index.get(&module) {
+            Some(&i) => groups[i].symbols.push(symbol),
+            None => {
+                index.insert(module.clone(), groups.len());
+                groups.push(SearchFile {
+                    module,
+                    path,
+                    by_file: false,
+                    symbols: vec![symbol],
+                });
+            }
+        }
+    }
+
+    // 文件命中只比文件名和模块最后一段。目录名不算，否则搜 man 会把 command、
+    // manager 这些目录下的文件全部拉出来，一次按键就是上千个文件。
+    let mut file_stmt = conn.prepare(
+        "SELECT module, path FROM module WHERE project_id = ?1 ORDER BY path",
+    )?;
+    let mut opened = 0usize;
+    for row in file_stmt.query_map(params![project_id], |row| {
+        let path: String = row.get(1)?;
+        Ok((
+            row.get::<_, String>(0)?,
+            path.trim_start_matches(r"\\?\").to_string(),
+        ))
+    })? {
+        if opened >= FILE_LIMIT {
+            break;
+        }
+        let (module, path) = row?;
+        let base = path
+            .rsplit(|c| c == '/' || c == '\\')
+            .next()
+            .unwrap_or(&path)
+            .to_lowercase();
+        let last = module.rsplit('.').next().unwrap_or(&module).to_lowercase();
+        if !base.contains(&low) && !last.contains(&low) {
+            continue;
+        }
+        let syms = symbols_of(conn, &module, false)?;
+        // 一条定义都没有的文件不能当入口，直接跳过
+        if syms.is_empty() {
+            continue;
+        }
+        opened += 1;
+        match index.get(&module) {
+            Some(&i) => {
+                groups[i].symbols = syms;
+                groups[i].by_file = true;
+            }
+            None => {
+                index.insert(module.clone(), groups.len());
+                groups.push(SearchFile {
+                    module,
+                    path,
+                    by_file: true,
+                    symbols: syms,
+                });
+            }
+        }
+    }
+
+    // 只命中函数名的组排在前面，整份带出来的排后面
+    groups.sort_by_key(|g| g.by_file);
+
+    let mut out: Vec<SearchFile> = Vec::new();
+    let mut total = 0usize;
+    for mut g in groups {
+        if total >= limit {
+            break;
+        }
+        if total + g.symbols.len() > limit {
+            g.symbols.truncate(limit - total);
+        }
+        total += g.symbols.len();
+        out.push(g);
+    }
+
+    Ok(out)
 }
 
 /// Entry points of a project as `(symbol_id, module, qualname, confidence)`.
