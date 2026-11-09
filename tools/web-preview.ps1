@@ -23,10 +23,12 @@ $db = Join-Path (Resolve-Path $Project) ".clew\index.db"
 New-Item -ItemType Directory -Force -Path $web | Out-Null
 Copy-Item (Join-Path $repo "src\index.html") $web -Force
 Copy-Item (Join-Path $repo "src\app.js") $web -Force
-foreach ($extra in @("shell.js", "logo.png")) {
+foreach ($extra in @("shell.js", "logo.png", "themes.js")) {
   $src = Join-Path $repo "src\$extra"
   if (Test-Path $src) { Copy-Item $src $web -Force }
 }
+# 第三方前端库：预览和桌面端读同一份文件，别让预览退化成无高亮
+Copy-Item (Join-Path $repo "src\vendor") $web -Recurse -Force
 
 if (-not (Test-Path $db)) {
   Write-Host "no index yet, scanning once..."

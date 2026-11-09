@@ -802,7 +802,7 @@
   const menu = document.createElement("div");
   menu.id = "tb-menu";
   menu.hidden = true;
-  for (const [key, label] of [["file", "文件"], ["help", "帮助"]]) {
+  for (const [key, label] of [["file", "文件"], ["theme", "主题"], ["help", "帮助"]]) {
     const item = document.createElement("button");
     item.className = "tb-menu-item";
     item.dataset.menu = key;
@@ -1153,11 +1153,27 @@
         { label: "重建索引", run: rebuildIndex },
         { label: "删除索引", run: removeIndex },
       ]);
+    } else if (item.dataset.menu === "theme") {
+      popAt(item, themeItems());
     } else {
       closePop();
       help.hidden = false;
     }
   });
+
+  // 代码配色主题：直接铺在菜单里，当前那个前面打勾
+  function themeItems() {
+    const list = window.CLEW_THEMES || [];
+    const now = window.__clewThemeId ? window.__clewThemeId() : "";
+    const items = list.map((t) => ({
+      label: (t.id === now ? "✓ " : "   ") + t.name,
+      run: () => {
+        if (window.__clewApplyTheme) window.__clewApplyTheme(t.id);
+      },
+    }));
+    if (!items.length) items.push({ label: "主题表没加载", disabled: true });
+    return items;
+  }
 
   // 项目列表子菜单：固定显示前几个，其余折成一行省略号，最后是管理入口
   const SUB_MENU_MAX = 8;

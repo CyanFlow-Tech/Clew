@@ -67,6 +67,23 @@
   .ln.stmt{color:#c9d1d9}
   .ln.branch{color:var(--br)}
   .ln.call{color:var(--call)}
+  /* 语法色：整行仍跟行色走（标点、括号），语义片段各自上色。
+     具体色值来自 themes.js，这里只给兜底值 */
+  .ln .hljs-keyword{color:var(--hl-kw,#ff7b72)}
+  .ln .hljs-string{color:var(--hl-str,#a5d6ff)}
+  .ln .hljs-subst{color:var(--hl-num,#79c0ff)}
+  .ln .hljs-number{color:var(--hl-num,#79c0ff)}
+  .ln .hljs-literal{color:var(--hl-num,#79c0ff)}
+  .ln .hljs-title{color:var(--hl-fn,#d2a8ff)}
+  .ln .hljs-title.function_{color:var(--hl-fn,#d2a8ff)}
+  .ln .hljs-title.class_{color:var(--hl-cls,#ffa657)}
+  .ln .hljs-params{color:var(--hl-param,#c9d1d9)}
+  .ln .hljs-built_in{color:var(--hl-builtin,#ffa657)}
+  .ln .hljs-meta{color:var(--hl-meta,#d2a8ff)}
+  .ln .hljs-variable{color:var(--hl-self,#ffa657);font-style:italic}
+  .ln .hljs-comment{color:var(--hl-comment,#8b949e);font-style:italic}
+  /* 合成的临时量 %N，与源码里的真实变量区分开 */
+  .ln .tmp{color:var(--hl-tmp,#7d8794);font-style:italic}
   .ln.more{color:var(--dim);font-style:italic;cursor:pointer}
   .ln.more:hover{color:var(--acc)}
   .ext{border-bottom:1px dotted var(--acc);cursor:help}
@@ -113,6 +130,10 @@
 <div id="focus"></div>
 <div id="hint">◆ 橙色=精确 · 黄=启发式 · 紫=多态 · 灰=未解析 · ✕ 关闭（引用归零才删） · 类里的方法点开就地展开</div>
 
+<!-- 代码配色主题：只换 token 颜色，先于脚本加载，省掉首帧闪一下 -->
+<script src="themes.js"></script>
+<!-- 行内高亮：本地 vendoring 的 highlight.js，不依赖网络，随 resources 一起打进二进制 -->
+<script src="vendor/highlight.min.js"></script>
 <script>
   // 数据来自索引库：先打开项目，再一次性取出整张图，最后加载界面脚本。
   // 没有 __TAURI__ 时进浏览器预览：图从同目录的 __clew_graph.json 读（clew export 生成）。

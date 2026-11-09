@@ -108,17 +108,97 @@ function shortText(s, n) { return s.length > n ? s.slice(0, n) + "…" : s; }
 
 
 
+// ─── 行内高亮 ─────────────────────────────────────────────────────
+// 卡片里的一行是合成出来的（`%0 = f(x)`），不是原始源码。高亮交给
+// highlight.js，只有临时量 `%N` 不合法，先遮成合法标识符，渲染完再换回来。
+const TMP_MASK = /%(\d+)/g;
+const TMP_BACK = /__clew(\d+)__/g;
+
+function highlightLine(text) {
+  const hljs = window.hljs;
+  if (!hljs) return null;
+  const masked = text.replace(TMP_MASK, "__clew$1__");
+  try {
+    return {
+      html: hljs.highlight(masked, { language: "python", ignoreIllegals: true }).value,
+      masked: masked !== text,
+    };
+  } catch (err) {
+    return null; // 高亮失败就当没有，别把卡片搞没了
+  }
+}
+
+function textNodesOf(root) {
+  const out = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  while (walker.nextNode()) out.push(walker.currentNode);
+  return out;
+}
+
+// 把遮住的临时量还原成 %N，给它自己的颜色
+function restoreTemps(row) {
+  textNodesOf(row).forEach(function (node) {
+    const text = node.nodeValue;
+    if (text.indexOf("__clew") < 0) return;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    TMP_BACK.lastIndex = 0;
+    while ((m = TMP_BACK.exec(text))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const span = document.createElement("span");
+      span.className = "tmp";
+      span.textContent = "%" + m[1];
+      frag.appendChild(span);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+
+// 调用的目标名字挂一条虚线，来源是外部模块时带 tooltip。
+// 按文本节点找，不去动 hljs 生成的标记结构。
+function markExternal(row, target, imported) {
+  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp("\\b" + escaped + "\\b");
+  const nodes = textNodesOf(row);
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const parent = node.parentNode;
+    if (!parent || !node.nodeValue) continue;
+    if (parent.classList && parent.classList.contains("ext")) continue;
+    const m = re.exec(node.nodeValue);
+    if (!m) continue;
+    const span = document.createElement("span");
+    span.className = "ext";
+    if (imported) span.title = imported;
+    span.textContent = m[0];
+    const frag = document.createDocumentFragment();
+    const text = node.nodeValue;
+    if (m.index > 0) frag.appendChild(document.createTextNode(text.slice(0, m.index)));
+    frag.appendChild(span);
+    if (m.index + m[0].length < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(m.index + m[0].length)));
+    }
+    parent.replaceChild(frag, node);
+    return;
+  }
+}
+
 function renderLine(ln, host, ownerId) {
   const row = document.createElement("div");
   row.className = "ln " + ln.k;
   row.style.paddingLeft = (34 + (ln.indent || 0) * 12) + "px";
-  let html = esc(ln.text);
   const c = ln.cs ? CALLS[ln.cs] : null;
-  if (c && c.imported && c.target) {
-    const re = new RegExp("\\b" + c.target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b");
-    if (re.test(html)) html = html.replace(re, '<span class="ext" title="' + esc(c.imported) + '">$&</span>');
+  const lit = highlightLine(ln.text);
+  if (lit) {
+    row.innerHTML = lit.html;
+    if (lit.masked) restoreTemps(row);
+  } else {
+    row.innerHTML = esc(ln.text);
   }
-  row.innerHTML = html;
+  if (c && c.imported && c.target) markExternal(row, c.target, c.imported);
   if (ln.ln) {
     const num = document.createElement("span");
     num.className = "lnum";
