@@ -9,6 +9,21 @@
   const RECENT_KEY = "clew.recentProjects";
   const VERSION = "0.1.0";
 
+  // 窗口版没有控制台，JS 异常和取数失败都写进应用数据目录的 clew.log，
+  // 否则一次「点了没反应」事后只剩重启这一条线索
+  function logToFile(text) {
+    if (!desktop) return;
+    api.invoke("log_line", { text: String(text) }).catch(function () {});
+  }
+  window.__clewLog = logToFile;
+  window.addEventListener("error", function (e) {
+    logToFile("error " + (e.message || "?") + " @ " + (e.filename || "") + ":" + (e.lineno || 0));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    const r = e.reason;
+    logToFile("reject " + (r && (r.message || String(r))));
+  });
+
   // ── 样式 ────────────────────────────────────────────────────────
   const style = document.createElement("style");
   style.textContent = `
@@ -1788,6 +1803,10 @@
   };
   window.__clewToggleFavorite = function (id) {
     return toggleFavorite(id);
+  };
+  // app.js 取不到卡片时用它说话，否则一次失败只剩一片空白，看不出发生了什么
+  window.__clewNote = function (text, isError) {
+    setNote(text, !!isError);
   };
 
   panel.addEventListener("click", async function (e) {

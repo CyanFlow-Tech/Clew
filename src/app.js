@@ -24,6 +24,23 @@ function mergeFanin(map) {
 }
 
 const inflight = {};
+// 后端的调用偶尔会既不给结果也不报错，那一次点击就永远停在原地，
+// 后面每次点又都排在同一批未完成的请求上：整个界面等于废掉。
+const CARD_TIMEOUT = 20000;
+function withTimeout(p, ms, label) {
+  return new Promise(function (resolve, reject) {
+    let settled = false;
+    const timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      reject(new Error(label + " 超时 " + ms + "ms"));
+    }, ms);
+    p.then(
+      function (v) { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } },
+      function (e) { if (!settled) { settled = true; clearTimeout(timer); reject(e); } }
+    );
+  });
+}
 function ensure(ids) {
   if (!LAZY) return Promise.resolve();
   const want = [];
@@ -34,18 +51,20 @@ function ensure(ids) {
     if (want.indexOf(id) === -1) want.push(id);
   });
   if (want.length) {
-    const p = desktopApi.invoke("cards", { ids: want }).then(function (payload) {
-      const cards = payload.cards || {};
-      const calls = payload.calls || {};
-      const refs = payload.refs || {};
-      Object.keys(cards).forEach(function (k) { NODES[k] = cards[k]; });
-      Object.keys(calls).forEach(function (k) { CALLS[k] = calls[k]; });
-      Object.keys(refs).forEach(function (k) { REFS[k] = refs[k]; });
-      mergeFanin(payload.fanin);
-    });
+    const p = withTimeout(desktopApi.invoke("cards", { ids: want }), CARD_TIMEOUT, "cards")
+      .then(function (payload) {
+        const cards = payload.cards || {};
+        const calls = payload.calls || {};
+        const refs = payload.refs || {};
+        Object.keys(cards).forEach(function (k) { NODES[k] = cards[k]; });
+        Object.keys(calls).forEach(function (k) { CALLS[k] = calls[k]; });
+        Object.keys(refs).forEach(function (k) { REFS[k] = refs[k]; });
+        mergeFanin(payload.fanin);
+      });
     want.forEach(function (id) { inflight[id] = p; });
     p.catch(function (err) {
       console.error("取卡片失败", err);
+      if (window.__clewLog) window.__clewLog("cards " + want.join(",") + " 失败：" + err);
     }).then(function () {
       want.forEach(function (id) { delete inflight[id]; });
     });
@@ -349,8 +368,18 @@ function placeCard(id, parentHint) {
 async function expand(id, parentHint, viaCs) {
   if (!id) return;
   if (!NODES[id]) {
-    await ensure([id]);
-    if (!NODES[id]) return;
+    try {
+      await ensure([id]);
+    } catch (err) {
+      if (window.__clewLog) window.__clewLog("expand " + id + " 失败：" + err);
+    }
+    if (!NODES[id]) {
+      // 取不到就说明这一跳没得画，说出来，别静默什么都不发生
+      if (window.__clewNote) {
+        window.__clewNote("取不到 " + id + " 的卡片，索引可能不完整", true);
+      }
+      return;
+    }
   }
   if (viaCs) activated.add(viaCs);
 
@@ -707,6 +736,8 @@ function blankTab(rootId) {
     selectedRow: null,
     trail: [],
     nodes: [],
+    // 每个根自己记住看过的位置，新根从左上角开始
+    scroll: { left: 0, top: 0 },
   };
 }
 
@@ -731,9 +762,20 @@ function saveTab() {
   t.selectedId = selectedId;
   t.selectedRow = selectedRow;
   t.trail = trail;
+  t.scroll = { left: graph.scrollLeft, top: graph.scrollTop };
   t.nodes = Array.prototype.slice
     .call(world.children)
     .filter(function (el) { return el !== svg; });
+}
+
+// 把一张卡片带回视口左上角。画布是滚动容器，卡片坐标是 world 里的绝对坐标。
+function scrollToCard(id) {
+  const el = cardEls[id];
+  if (!el) return;
+  const x = parseFloat(el.style.left) || 0;
+  const y = parseFloat(el.style.top) || 0;
+  graph.scrollLeft = Math.max(0, x - 40);
+  graph.scrollTop = Math.max(0, y - 30);
 }
 
 function loadTab(rootId) {
@@ -763,6 +805,10 @@ function loadTab(rootId) {
   refreshSelectionUI(selectedId);
   renderTrail();
   relayout();
+  // 画布滚动量是全局的，不跟着 tab 走。换根时把上一个根滚到的位置留给它，
+  // 新根回到左上角，否则新根的卡片落在视口外面，看着像一张都没画出来。
+  graph.scrollLeft = t.scroll.left;
+  graph.scrollTop = t.scroll.top;
   if (window.__clewRootChanged) window.__clewRootChanged(rootId);
 }
 
@@ -770,10 +816,27 @@ function loadTab(rootId) {
 async function openRoot(rootId) {
   if (!rootId || rootId === activeRoot) {
     if (rootId && window.__clewRootOpened) window.__clewRootOpened(rootId);
+    // 已经在这个根上了。点了不该像没反应，至少把它的卡片带回眼前
+    scrollToCard(rootId);
     return;
   }
   const t = ensureTab(rootId);
   if (!t) return;
+  // 先把根的卡片取回来再动画布。反过来的话，任何一次取数失败都会把画布清空，
+  // 之后点哪个入口都只剩空白，只能靠重启解救。
+  if (!t.nodes.length && !NODES[rootId]) {
+    try {
+      await ensure([rootId]);
+    } catch (err) {
+      if (window.__clewLog) window.__clewLog("openRoot " + rootId + " 失败：" + err);
+    }
+    if (!NODES[rootId]) {
+      if (window.__clewNote) {
+        window.__clewNote("取不到 " + rootId + " 的卡片，索引可能不完整", true);
+      }
+      return;
+    }
+  }
   saveTab();
   loadTab(rootId);
   if (!t.nodes.length) {

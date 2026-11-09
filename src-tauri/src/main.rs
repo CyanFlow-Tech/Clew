@@ -138,7 +138,7 @@ fn open_ready(path: &Path) -> Result<(Index, OpenResult), String> {
 }
 
 fn remember(state: &State<'_, AppState>, index: Index) -> Result<(), String> {
-    *state.index.lock().map_err(|_| "内部状态损坏".to_string())? = Some(index);
+    *index_guard(&state) = Some(index);
     Ok(())
 }
 
@@ -223,7 +223,7 @@ fn open_project(path: String, state: State<'_, AppState>) -> Result<OpenResult, 
 
     // a scan for this same directory may already be running
     {
-        let guard = state.scan.lock().map_err(|_| "内部状态损坏".to_string())?;
+        let guard = scan_guard(&state);
         if let Some(job) = guard.as_ref() {
             if job.root == root && !job.finished.load(Ordering::SeqCst) {
                 return Ok(OpenResult {
@@ -245,7 +245,7 @@ fn open_project(path: String, state: State<'_, AppState>) -> Result<OpenResult, 
     }
 
     let job = spawn_scan(root.clone());
-    *state.scan.lock().map_err(|_| "内部状态损坏".to_string())? = Some(job);
+    *scan_guard(&state) = Some(job);
     eprintln!("[t] open_project @{:.0}ms started a background scan", since_start_ms());
 
     Ok(OpenResult {
@@ -262,7 +262,7 @@ fn open_project(path: String, state: State<'_, AppState>) -> Result<OpenResult, 
 /// Progress of the background scan, polled by the status bar.
 #[tauri::command]
 fn scan_status(state: State<'_, AppState>) -> Result<ScanStatus, String> {
-    let guard = state.scan.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = scan_guard(&state);
     let Some(job) = guard.as_ref() else {
         return Ok(ScanStatus {
             state: "idle",
@@ -276,7 +276,7 @@ fn scan_status(state: State<'_, AppState>) -> Result<ScanStatus, String> {
         });
     };
 
-    let p = *job.progress.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let p = *job.progress.lock().unwrap_or_else(|e| e.into_inner());
     let elapsed = job.started.elapsed().as_secs_f64();
     let f = p.fraction.clamp(0.0, 1.0) as f64;
     // only project once something measurable has happened
@@ -286,7 +286,7 @@ fn scan_status(state: State<'_, AppState>) -> Result<ScanStatus, String> {
         0.0
     };
 
-    let err = job.error.lock().map_err(|_| "内部状态损坏".to_string())?.clone();
+    let err = job.error.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let done = job.finished.load(Ordering::SeqCst);
     let state_name = if err.is_some() {
         "failed"
@@ -334,7 +334,7 @@ fn delete_index(path: String, state: State<'_, AppState>) -> Result<(), String> 
         .map_err(|e| format!("打不开这个目录：{e}"))?;
 
     {
-        let mut guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+        let mut guard = index_guard(&state);
         if guard.as_ref().map(|i| i.root.as_path()) == Some(root.as_path()) {
             *guard = None;
         }
@@ -358,7 +358,7 @@ fn boot(state: State<'_, AppState>) -> Result<Option<OpenResult>, String> {
 
 #[tauri::command]
 fn node(id: i64, state: State<'_, AppState>) -> Result<walk::NodeView, String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = guard.as_ref().ok_or("还没有打开项目")?;
     walk::node(index.mat.conn(), id)
         .map_err(|e| e.to_string())?
@@ -367,7 +367,7 @@ fn node(id: i64, state: State<'_, AppState>) -> Result<walk::NodeView, String> {
 
 #[tauri::command]
 fn code(id: i64, state: State<'_, AppState>) -> Result<Vec<walk::CodeLine>, String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = guard.as_ref().ok_or("还没有打开项目")?;
     walk::card_lines(index.mat.conn(), id).map_err(|e| e.to_string())
 }
@@ -379,16 +379,22 @@ fn code(id: i64, state: State<'_, AppState>) -> Result<Vec<walk::CodeLine>, Stri
 #[tauri::command]
 fn cards(ids: Vec<String>, state: State<'_, AppState>) -> Result<CardsPayload, String> {
     let t = Instant::now();
-    let mut guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let mut guard = index_guard(&state);
     let index = guard.as_mut().ok_or("还没有打开项目")?;
     let project_id = index.project_id;
 
     let mut materialised = 0usize;
     for id in &ids {
         if let Some(module) = clew_core::scan::materialize::module_of_card(id) {
-            match index.mat.ensure(module) {
-                Ok(n) => materialised += n,
-                Err(e) => eprintln!("[t] materialize {module} failed: {e}"),
+            // 建卡时 panic 只该坏这一个文件。让它顺着 unwind 穿出去，整个会话的
+            // 索引锁都会带上中毒标记，之后每张卡都取不到，只能重启。
+            let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                index.mat.ensure(module)
+            }));
+            match built {
+                Ok(Ok(n)) => materialised += n,
+                Ok(Err(e)) => eprintln!("[t] materialize {module} failed: {e}"),
+                Err(_) => eprintln!("[t] materialize {module} panicked"),
             }
         }
     }
@@ -417,7 +423,7 @@ fn project_id_of(conn: &Conn, root: &Path) -> Result<i64, String> {
 #[tauri::command]
 fn graph(state: State<'_, AppState>) -> Result<clew_core::snapshot::Snapshot, String> {
     let t = Instant::now();
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = guard.as_ref().ok_or("还没有打开项目")?;
     let project_id = project_id_of(index.mat.conn(), &index.root)?;
     let snap = snapshot::snapshot(index.mat.conn(), project_id).map_err(|e| e.to_string())?;
@@ -433,14 +439,14 @@ fn graph(state: State<'_, AppState>) -> Result<clew_core::snapshot::Snapshot, St
 
 #[tauri::command]
 fn notes(id: i64, state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = guard.as_ref().ok_or("还没有打开项目")?;
     walk::notes(index.mat.conn(), id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn add_note(id: i64, text: String, state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = guard.as_ref().ok_or("还没有打开项目")?;
     repo::insert_note(index.mat.conn(), id, text.trim())
         .map(|_| ())
@@ -449,7 +455,7 @@ fn add_note(id: i64, text: String, state: State<'_, AppState>) -> Result<(), Str
 
 #[tauri::command]
 fn source_root(state: State<'_, AppState>) -> Result<String, String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = guard.as_ref().ok_or("还没有打开项目")?;
     Ok(index.root.display().to_string())
 }
@@ -464,7 +470,7 @@ fn ready(window: tauri::WebviewWindow) -> Result<(), String> {
 /// 项目里所有被索引的文件，入口面板左栏的文件树用它。
 #[tauri::command]
 fn files(state: State<'_, AppState>) -> Result<Vec<walk::FileRow>, String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = index_or(&guard)?;
     let mut rows = walk::files(index.mat.conn(), index.project_id).map_err(|e| e.to_string())?;
     for r in rows.iter_mut() {
@@ -476,13 +482,25 @@ fn files(state: State<'_, AppState>) -> Result<Vec<walk::FileRow>, String> {
 /// 一个文件里的全部定义，按行号排序。
 #[tauri::command]
 fn symbols_in(module: String, state: State<'_, AppState>) -> Result<Vec<walk::SymbolRow>, String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = index_or(&guard)?;
     walk::symbols_in(index.mat.conn(), &module).map_err(|e| e.to_string())
 }
 
 fn index_or(guard: &Option<Index>) -> Result<&Index, String> {
     guard.as_ref().ok_or_else(|| "还没有打开项目".to_string())
+}
+
+/// 索引锁。命令里只要有一次 panic，这把锁就带上中毒标记，之后每次取锁都失败，
+/// 表现成「点什么都画不出卡片，重启才好」。中毒的只是这一次的数据，接着用就是，
+/// 不能让一条命令的崩溃拖死整场会话。
+fn index_guard<'a>(state: &'a State<'_, AppState>) -> std::sync::MutexGuard<'a, Option<Index>> {
+    state.index.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 后台扫描任务的锁，理由同 `index_guard`。
+fn scan_guard<'a>(state: &'a State<'_, AppState>) -> std::sync::MutexGuard<'a, Option<Arc<ScanJob>>> {
+    state.scan.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// 入口面板的搜索：命中文件名会列出该文件的全部定义，命中定义名只列命中的。
@@ -492,7 +510,7 @@ fn search(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<walk::SearchFile>, String> {
-    let guard = state.index.lock().map_err(|_| "内部状态损坏".to_string())?;
+    let guard = index_guard(&state);
     let index = index_or(&guard)?;
     let mut rows = walk::search(index.mat.conn(), index.project_id, &q, limit.unwrap_or(200))
         .map_err(|e| e.to_string())?;
@@ -574,8 +592,49 @@ fn roots(
     Ok(out)
 }
 
+/// 应用数据目录，日志和入口记录都放这里。
+fn data_dir() -> PathBuf {
+    let base = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    Path::new(&base).join("tech.cyanflow.clew")
+}
+
+/// 追加一行日志。窗口程序没有控制台，出错时只剩「点了没反应」，
+/// 不落一份文件就无从查起。
+fn append_log(scope: &str, line: &str) {
+    let dir = data_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let text = format!("[{secs}] {scope}: {line}\n");
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("clew.log"))
+        .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
+}
+
+/// 前端把 JS 异常和取数失败送到这里，和 Rust 侧的 panic 记在同一份日志里。
+#[tauri::command]
+fn log_line(text: String) {
+    append_log("web", &text);
+}
+
+/// 命令里的 panic 记一份，否则它只是静悄悄地把锁毒掉。
+fn install_panic_log() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        append_log("panic", &info.to_string());
+        previous(info);
+    }));
+}
+
 fn main() {
     START.set(Instant::now()).ok();
+    install_panic_log();
     eprintln!("[t] main starts");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -589,6 +648,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             ready,
+            log_line,
             files,
             symbols_in,
             search,
