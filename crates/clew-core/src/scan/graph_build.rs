@@ -432,6 +432,37 @@ impl Builder {
         ln: u32,
         out: &mut Vec<Line>,
     ) {
+        self.emit_calls_span(
+            stmt.start_byte(),
+            stmt.end_byte(),
+            LineKind::Call,
+            LineKind::Stmt,
+            calls,
+            owner,
+            indent,
+            ln,
+            out,
+        );
+    }
+
+    /// The same expansion over an arbitrary source span: a statement, or just
+    /// the header of a compound statement.
+    ///
+    /// `own` is the kind of the last line when it carries a call itself,
+    /// `plain` the kind when it only shows the substituted text.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_calls_span(
+        &mut self,
+        start: usize,
+        end: usize,
+        own: LineKind,
+        plain: LineKind,
+        calls: &[Node],
+        owner: &str,
+        indent: u8,
+        ln: u32,
+        out: &mut Vec<Line>,
+    ) {
         let parents = call_parents(calls);
         let mut roots = Vec::new();
         let mut children: Vec<Vec<usize>> = vec![Vec::new(); calls.len()];
@@ -482,15 +513,15 @@ impl Builder {
             });
         }
 
-        let repls = repls_within(calls, &name_of, None, stmt.start_byte(), stmt.end_byte());
-        let body = self.text_replacing(stmt.start_byte(), stmt.end_byte(), repls);
+        let repls = repls_within(calls, &name_of, None, start, end);
+        let body = self.text_replacing(start, end, repls);
         let text = self.clipped(&body);
         match statement_call {
             Some(root) => {
                 let cs_id = format!("{owner}#{}", out.len());
                 self.record_call(cs_id.clone(), owner, calls[root]);
                 out.push(Line {
-                    k: LineKind::Call,
+                    k: own,
                     text,
                     indent,
                     ln,
@@ -498,7 +529,7 @@ impl Builder {
                 });
             }
             None => out.push(Line {
-                k: LineKind::Stmt,
+                k: plain,
                 text,
                 indent,
                 ln,
@@ -538,28 +569,32 @@ impl Builder {
         let mut cursor = root.walk();
         let mut main_guard = false;
         for node in root.children(&mut cursor) {
-            match node.kind() {
-                "import_statement" => self.collect_import(node),
-                "import_from_statement" => self.collect_import_from(node),
-                "function_definition" => self.add_function(node, None),
-                "class_definition" => self.add_class(node),
-                "if_statement" => {
-                    if is_main_guard(&self.src, node) {
-                        main_guard = true;
-                        if !self.symbols_only {
-                            self.module_body(node);
-                        }
-                    }
+            if node.kind() == "if_statement" && is_main_guard(&self.src, node) {
+                main_guard = true;
+                if !self.symbols_only {
+                    self.module_body(node);
                 }
-                "decorated_definition" => {
-                    if let Some(inner) = node.child_by_field_name("definition") {
-                        match inner.kind() {
-                            "function_definition" => self.add_function(inner, None),
-                            "class_definition" => self.add_class(inner),
-                            _ => {}
-                        }
-                    }
-                }
+            }
+        }
+
+        // Imports and definitions anywhere the module scope reaches. A `def`
+        // under `if`/`for`/`while`/`with`/`try` is still module level, so the
+        // walk descends through those statements instead of reading the root's
+        // children one by one.
+        for item in scope_items(
+            root,
+            &[
+                "import_statement",
+                "import_from_statement",
+                "function_definition",
+                "class_definition",
+            ],
+        ) {
+            match item.kind() {
+                "import_statement" => self.collect_import(item),
+                "import_from_statement" => self.collect_import_from(item),
+                "function_definition" => self.add_function(item, "", false),
+                "class_definition" => self.add_class(item, ""),
                 _ => {}
             }
         }
@@ -581,7 +616,7 @@ impl Builder {
         self.temp_counter = 0;
         // `if_statement` uses `consequence`, not a `body` field
         if let Some(body) = first_block(guard) {
-            self.emit_block(body, &owner, 0, &mut lines, &mut locals);
+            self.emit_block(body, &owner, 0, &mut lines, &mut locals, "");
         }
         if !lines.is_empty() {
             self.module_cards.insert(self.module.clone(), lines);
@@ -729,17 +764,20 @@ impl Builder {
     }
 
     // ── functions and methods ─────────────────────────────────────
-    fn add_function(&mut self, node: Node, class: Option<&str>) {
+    /// `scope` is the qualname of the enclosing scope (empty at module level),
+    /// so a nested `def` lands at `outer.inner` instead of `inner`.
+    fn add_function(&mut self, node: Node, scope: &str, in_class: bool) {
         let Some(name_node) = node.child_by_field_name("name") else {
             return;
         };
         let name = self.text(name_node);
-        let qualname = match class {
-            Some(c) => format!("{c}.{name}"),
-            None => name.clone(),
+        let qualname = if scope.is_empty() {
+            name.clone()
+        } else {
+            format!("{scope}.{name}")
         };
         let id = Graph::card_id(&self.module, &qualname);
-        let kind = if class.is_some() {
+        let kind = if in_class {
             CardKind::Method
         } else {
             CardKind::Function
@@ -748,11 +786,22 @@ impl Builder {
         // 只建符号时到此为止：函数体留给按需物化
         if self.symbols_only {
             self.push_symbol(node, &qualname, SymbolKind::of_card(kind));
-            if let Some(c) = class {
+            if in_class {
                 self.methods
-                    .entry((self.module.clone(), c.to_string()))
+                    .entry((self.module.clone(), scope.to_string()))
                     .or_default()
                     .insert(name, id);
+            }
+            // the fast scan never walks bodies, so a `def` nested inside this
+            // one has to be picked up right here
+            if let Some(body) = node.child_by_field_name("body") {
+                for def in scope_items(body, &["function_definition", "class_definition"]) {
+                    match def.kind() {
+                        "function_definition" => self.add_function(def, &qualname, false),
+                        "class_definition" => self.add_class(def, &qualname),
+                        _ => {}
+                    }
+                }
             }
             return;
         }
@@ -762,7 +811,7 @@ impl Builder {
         let mut lines = Vec::new();
         let mut locals = BTreeMap::new();
         if let Some(body) = node.child_by_field_name("body") {
-            self.emit_block(body, &id, 0, &mut lines, &mut locals);
+            self.emit_block(body, &id, 0, &mut lines, &mut locals, &qualname);
         }
         let title = format!("{qualname}({})", params.join(", "));
 
@@ -785,9 +834,9 @@ impl Builder {
             },
         );
         self.push_symbol(node, &qualname, SymbolKind::of_card(kind));
-        if let Some(c) = class {
+        if in_class {
             self.methods
-                .entry((self.module.clone(), c.to_string()))
+                .entry((self.module.clone(), scope.to_string()))
                 .or_default()
                 .insert(name, id.clone());
         }
@@ -796,12 +845,17 @@ impl Builder {
         }
     }
 
-    fn add_class(&mut self, node: Node) {
+    fn add_class(&mut self, node: Node, scope: &str) {
         let Some(name_node) = node.child_by_field_name("name") else {
             return;
         };
         let name = self.text(name_node);
-        let id = Graph::card_id(&self.module, &name);
+        let qualname = if scope.is_empty() {
+            name.clone()
+        } else {
+            format!("{scope}.{name}")
+        };
+        let id = Graph::card_id(&self.module, &qualname);
         self.temp_counter = 0;
 
         let mut bases = Vec::new();
@@ -815,30 +869,36 @@ impl Builder {
             }
         }
 
+        // Methods and nested classes anywhere the class body reaches:
+        // `if TYPE_CHECKING:` and `try: ... except ImportError:` do not leave
+        // class scope, so their `def`s are still methods.
+        let mut method_defs: Vec<Node> = Vec::new();
+        let mut nested_classes: Vec<Node> = Vec::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            for def in scope_items(body, &["function_definition", "class_definition"]) {
+                if def.kind() == "class_definition" {
+                    nested_classes.push(def);
+                } else {
+                    method_defs.push(def);
+                }
+            }
+        }
+
         // 只建符号时：类体不展开，方法只登记名字与位置
         if self.symbols_only {
-            self.push_symbol(node, &name, SymbolKind::Class);
+            self.push_symbol(node, &qualname, SymbolKind::Class);
             self.class_ids
-                .insert((self.module.clone(), name.clone()), id.clone());
+                .insert((self.module.clone(), qualname.clone()), id.clone());
             self.class_by_qualname
-                .entry(name.clone())
+                .entry(qualname.clone())
                 .or_insert_with(|| id.clone());
             self.class_bases
-                .insert(id.clone(), (self.module.clone(), bases));
-            if let Some(body) = node.child_by_field_name("body") {
-                let mut cursor = body.walk();
-                for child in body.children(&mut cursor) {
-                    let def = if child.kind() == "decorated_definition" {
-                        child.child_by_field_name("definition")
-                    } else if child.kind() == "function_definition" {
-                        Some(child)
-                    } else {
-                        None
-                    };
-                    if let Some(def) = def {
-                        self.add_function(def, Some(&name));
-                    }
-                }
+                .insert(id.clone(), (self.module.clone(), bases.clone()));
+            for def in &method_defs {
+                self.add_function(*def, &qualname, true);
+            }
+            for def in &nested_classes {
+                self.add_class(*def, &qualname);
             }
             return;
         }
@@ -850,33 +910,22 @@ impl Builder {
         let mut ctor_attrs: BTreeMap<String, String> = BTreeMap::new();
         let mut ctor_id: Option<String> = None;
 
-        if let Some(body) = node.child_by_field_name("body") {
-            let mut cursor = body.walk();
-            for child in body.children(&mut cursor) {
-                let def = if child.kind() == "decorated_definition" {
-                    child.child_by_field_name("definition")
-                } else if child.kind() == "function_definition" {
-                    Some(child)
-                } else {
-                    None
-                };
-                let Some(def) = def else { continue };
-                let Some(fname) = def.child_by_field_name("name") else {
-                    continue;
-                };
-                let mname = self.text(fname);
-                methods.push(MethodRef {
-                    name: mname.clone(),
-                    target: format!("{id}.{mname}"),
-                });
-                if mname == "__init__" {
-                    ctor_id = Some(format!("{id}.{mname}"));
-                    ctor_params = self.params_of(def);
-                    if let Some(b) = def.child_by_field_name("body") {
-                        self.emit_block(b, &id, 0, &mut ctor_lines, &mut ctor_locals);
-                    }
-                    self.collect_self_attrs(def, &mut ctor_attrs);
+        for def in &method_defs {
+            let Some(fname) = def.child_by_field_name("name") else {
+                continue;
+            };
+            let mname = self.text(fname);
+            methods.push(MethodRef {
+                name: mname.clone(),
+                target: format!("{id}.{mname}"),
+            });
+            if mname == "__init__" {
+                ctor_id = Some(format!("{id}.{mname}"));
+                ctor_params = self.params_of(*def);
+                if let Some(b) = def.child_by_field_name("body") {
+                    self.emit_block(b, &id, 0, &mut ctor_lines, &mut ctor_locals, &qualname);
                 }
+                self.collect_self_attrs(*def, &mut ctor_attrs);
             }
         }
 
@@ -886,7 +935,7 @@ impl Builder {
             Card {
                 id: id.clone(),
                 module: self.module.clone(),
-                qualname: name.clone(),
+                qualname: qualname.clone(),
                 title,
                 params: ctor_params,
                 kind: CardKind::Class,
@@ -899,18 +948,18 @@ impl Builder {
                 locals: BTreeMap::new(),
             },
         );
-        self.push_symbol(node, &name, SymbolKind::Class);
+        self.push_symbol(node, &qualname, SymbolKind::Class);
         self.out_classes.push(ClassMeta {
             card_id: id.clone(),
             module: self.module.clone(),
-            qualname: name.clone(),
+            qualname: qualname.clone(),
             bases: bases.clone(),
             ctor: ctor_id,
         });
         self.class_ids
-            .insert((self.module.clone(), name.clone()), id.clone());
+            .insert((self.module.clone(), qualname.clone()), id.clone());
         self.class_by_qualname
-            .entry(name.clone())
+            .entry(qualname.clone())
             .or_insert_with(|| id.clone());
         self.class_bases
             .insert(id.clone(), (self.module.clone(), bases));
@@ -920,20 +969,11 @@ impl Builder {
         }
 
         // method bodies inside a class become cards of their own
-        if let Some(body) = node.child_by_field_name("body") {
-            let mut cursor = body.walk();
-            for child in body.children(&mut cursor) {
-                let def = if child.kind() == "decorated_definition" {
-                    child.child_by_field_name("definition")
-                } else if child.kind() == "function_definition" {
-                    Some(child)
-                } else {
-                    None
-                };
-                if let Some(def) = def {
-                    self.add_function(def, Some(&name));
-                }
-            }
+        for def in &method_defs {
+            self.add_function(*def, &qualname, true);
+        }
+        for def in &nested_classes {
+            self.add_class(*def, &qualname);
         }
     }
 
@@ -1007,31 +1047,40 @@ impl Builder {
         indent: u8,
         out: &mut Vec<Line>,
         locals: &mut BTreeMap<String, String>,
+        scope: &str,
     ) {
         let mut cursor = block.walk();
         for stmt in block.children(&mut cursor) {
-            match stmt.kind() {
-                "if_statement" | "for_statement" | "while_statement" | "with_statement"
-                | "try_statement" | "match_statement" => {
-                    out.push(Line {
-                        k: LineKind::Branch,
-                        text: self.first_line(stmt),
-                        indent,
-                        ln: stmt.start_position().row as u32 + 1,
-                        cs: None,
-                    });
-                    let mut inner = stmt.walk();
-                    for ch in stmt.children(&mut inner) {
-                        match ch.kind() {
-                            "block" | "else_clause" | "elif_clause" | "except_clause"
-                            | "finally_clause" | "case_clause" => {
-                                self.emit_compound_body(ch, owner, indent + 1, out, locals);
-                            }
-                            _ => {}
-                        }
-                    }
+            // A `def`/`class` inside the body owns its lines in a card of its
+            // own; the enclosing card keeps just the definition line, and the
+            // nested definition is registered under the enclosing qualname.
+            if let Some(def) = definition_of(stmt) {
+                let saved = self.temp_counter;
+                out.push(Line {
+                    k: LineKind::Branch,
+                    text: self.first_line(stmt),
+                    indent,
+                    ln: stmt.start_position().row as u32 + 1,
+                    cs: None,
+                });
+                match def.kind() {
+                    "function_definition" => self.add_function(def, scope, false),
+                    "class_definition" => self.add_class(def, scope),
+                    _ => {}
                 }
-                "block" => self.emit_block(stmt, owner, indent, out, locals),
+                // the nested card numbers its own `%N`, so the enclosing card
+                // keeps counting where it left off
+                self.temp_counter = saved;
+                continue;
+            }
+
+            if is_compound(stmt.kind()) {
+                self.emit_compound(stmt, owner, indent, out, locals, scope);
+                continue;
+            }
+
+            match stmt.kind() {
+                "block" => self.emit_block(stmt, owner, indent, out, locals, scope),
                 _ => {
                     let calls = collect_calls(stmt);
                     let ln = stmt.start_position().row as u32 + 1;
@@ -1070,22 +1119,63 @@ impl Builder {
         }
     }
 
-    fn emit_compound_body(
+    /// One compound statement: its header line, then every body and clause.
+    ///
+    /// The calls in the header (`if check():`, `while gate():`,
+    /// `with suppress(err):`, `for x in fetch():`) are call sites of the same
+    /// card, so the header line can be anchored just like a plain statement.
+    /// `indent` is the column of the header itself: `if`/`elif`/`else` share it
+    /// and only their bodies go one level deeper.
+    fn emit_compound(
         &mut self,
         node: Node,
         owner: &str,
         indent: u8,
         out: &mut Vec<Line>,
         locals: &mut BTreeMap<String, String>,
+        scope: &str,
     ) {
-        if node.kind() == "block" {
-            self.emit_block(node, owner, indent, out, locals);
-            return;
+        let ln = node.start_position().row as u32 + 1;
+        // the header ends where the first body or clause begins
+        let mut probe = node.walk();
+        let body_start = node
+            .children(&mut probe)
+            .find(|c| c.kind() == "block" || is_clause(c.kind()))
+            .map(|c| c.start_byte())
+            .unwrap_or_else(|| node.end_byte());
+        let header_calls: Vec<Node> = collect_calls(node)
+            .into_iter()
+            .filter(|c| c.end_byte() <= body_start)
+            .collect();
+        if header_calls.is_empty() {
+            out.push(Line {
+                k: LineKind::Branch,
+                text: self.first_line(node),
+                indent,
+                ln,
+                cs: None,
+            });
+        } else {
+            self.emit_calls_span(
+                node.start_byte(),
+                body_start,
+                LineKind::Branch,
+                LineKind::Branch,
+                &header_calls,
+                owner,
+                indent,
+                ln,
+                out,
+            );
         }
+
         let mut cursor = node.walk();
         for ch in node.children(&mut cursor) {
             if ch.kind() == "block" {
-                self.emit_block(ch, owner, indent, out, locals);
+                self.emit_block(ch, owner, indent + 1, out, locals, scope);
+            } else if is_clause(ch.kind()) {
+                // `elif`/`else`/`except` stay at the header's column
+                self.emit_compound(ch, owner, indent, out, locals, scope);
             }
         }
     }
@@ -1470,6 +1560,87 @@ fn nanos(d: Duration) -> u64 {
 
 fn first_block(node: Node) -> Option<Node> {    let mut cursor = node.walk();
     node.children(&mut cursor).find(|c| c.kind() == "block")
+}
+
+/// The `def`/`class` node a statement defines, decorated or not.
+fn definition_of(node: Node) -> Option<Node> {
+    match node.kind() {
+        "function_definition" | "class_definition" => Some(node),
+        "decorated_definition" => node.child_by_field_name("definition"),
+        _ => None,
+    }
+}
+
+/// Statements that keep the enclosing scope instead of opening a new one.
+fn is_scope_container(kind: &str) -> bool {
+    matches!(
+        kind,
+        "module"
+            | "block"
+            | "if_statement"
+            | "for_statement"
+            | "while_statement"
+            | "with_statement"
+            | "try_statement"
+            | "match_statement"
+    ) || is_clause(kind)
+}
+
+/// The trailing parts of a compound statement: `else`, `elif`, `except`,
+/// `finally`, `case`.
+fn is_clause(kind: &str) -> bool {
+    matches!(
+        kind,
+        "elif_clause"
+            | "else_clause"
+            | "except_clause"
+            | "except_group_clause"
+            | "finally_clause"
+            | "case_clause"
+    )
+}
+
+/// Compound statements and their clauses: `emit_compound` handles these.
+fn is_compound(kind: &str) -> bool {
+    matches!(
+        kind,
+        "if_statement"
+            | "for_statement"
+            | "while_statement"
+            | "with_statement"
+            | "try_statement"
+            | "match_statement"
+    ) || is_clause(kind)
+}
+
+/// Definitions and imports directly visible in one scope, in source order.
+///
+/// Descends through `if`/`for`/`while`/`with`/`try`/`match` and their clauses
+/// because those do not open a scope, and stops at function bodies: a `def`
+/// inside a `def` belongs to that def, not here.
+fn scope_items<'a>(node: Node<'a>, want: &[&str]) -> Vec<Node<'a>> {
+    let mut out = Vec::new();
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        let mut cursor = n.walk();
+        let children: Vec<Node> = n.children(&mut cursor).collect();
+        for ch in children {
+            let kind = ch.kind();
+            if want.contains(&kind) {
+                out.push(ch);
+            } else if kind == "decorated_definition" {
+                if let Some(def) = ch.child_by_field_name("definition") {
+                    if want.contains(&def.kind()) {
+                        out.push(def);
+                    }
+                }
+            } else if is_scope_container(kind) {
+                stack.push(ch);
+            }
+        }
+    }
+    out.sort_by_key(|n| n.start_byte());
+    out
 }
 
 /// True for `if __name__ == "__main__":`.

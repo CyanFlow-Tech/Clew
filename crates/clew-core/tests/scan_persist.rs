@@ -279,6 +279,126 @@ fn nested_calls_keep_multibyte_text_intact() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A `def` under `if`/`while`/`with` still belongs to the enclosing scope, and
+/// the calls in those headers are call sites of the enclosing card.
+#[test]
+fn conditional_and_nested_definitions_are_indexed() {
+    let dir = std::env::temp_dir().join(format!("clew-scan-nested-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("app.py"),
+        "import contextlib\n\
+         \n\
+         \n\
+         def outer():\n\
+         \x20   if gate():\n\
+         \x20       def in_if():\n\
+         \x20           return 1\n\
+         \n\
+         \x20   while spin():\n\
+         \x20       def in_while():\n\
+         \x20           return 2\n\
+         \n\
+         \x20   with contextlib.suppress(OSError):\n\
+         \x20       def in_with():\n\
+         \x20           return 3\n\
+         \n\
+         \x20   return 0\n\
+         \n\
+         \n\
+         if module_gate():\n\
+         \x20   def in_module_if():\n\
+         \x20       return 4\n\
+         \n\
+         \n\
+         class Box:\n\
+         \x20   if TYPE_CHECKING:\n\
+         \x20       def type_only(self):\n\
+         \x20           return 5\n\
+         \n\
+         \n\
+         def gate():\n\
+         \x20   return True\n",
+    )
+    .unwrap();
+    let root = dir.canonicalize().unwrap();
+
+    let db_path = root.join("index.db");
+    let mut conn = open(&db_path).unwrap();
+    scan(&mut conn, &root, false).unwrap();
+    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT qualname, kind FROM symbol
+              WHERE project_id = ?1 AND kind != 'module'
+              ORDER BY qualname",
+        )
+        .unwrap();
+    let found: Vec<(String, String)> = stmt
+        .query_map([project_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    let want: Vec<(&str, &str)> = vec![
+        ("Box", "class"),
+        ("Box.type_only", "method"),
+        ("gate", "function"),
+        ("in_module_if", "function"),
+        ("outer", "function"),
+        ("outer.in_if", "function"),
+        ("outer.in_while", "function"),
+        ("outer.in_with", "function"),
+    ];
+    assert_eq!(
+        found,
+        want.iter()
+            .map(|(q, k)| (q.to_string(), k.to_string()))
+            .collect::<Vec<_>>(),
+        "conditional and nested definitions must be indexed"
+    );
+    drop(stmt);
+
+    // the branch headers are call sites of the enclosing function
+    let mut stmt = conn
+        .prepare("SELECT target FROM call_site WHERE owner = 'outer' ORDER BY target")
+        .unwrap();
+    let targets: Vec<String> = stmt
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    drop(stmt);
+    assert_eq!(targets, vec!["gate", "spin", "suppress"]);
+
+    // and the nested `def` lines stay visible inside the outer card
+    let mut stmt = conn
+        .prepare(
+            "SELECT l.text, l.kind FROM card_line l JOIN symbol s ON s.id = l.symbol_id
+              WHERE s.qualname = 'outer' AND l.text LIKE 'def %' ORDER BY l.ord",
+        )
+        .unwrap();
+    let defs: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    drop(stmt);
+    assert_eq!(
+        defs,
+        vec![
+            ("def in_if():".to_string(), "branch".to_string()),
+            ("def in_while():".to_string(), "branch".to_string()),
+            ("def in_with():".to_string(), "branch".to_string()),
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The progress bar must never jump backwards, and must end at 100%.
 #[test]
 fn scan_reports_monotonic_progress() {

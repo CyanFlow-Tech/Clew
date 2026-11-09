@@ -317,17 +317,20 @@ function ctorArgs(card) {
 }
 
 // 方法不是卡片：展开 = 让所属类出现 + 该行出现 + 展开
+// 判据是卡片种类，不是名字里有没有点：嵌套函数也带点，但它是一张普通卡片
 function isMethod(id) {
-  return NODES[id] && NODES[id].qualname.indexOf(".") !== -1;
+  return NODES[id] && NODES[id].kind === "method";
 }
 function isCtor(id) {
   const n = NODES[id];
   return !!n && n.qualname.split(".").pop() === "__init__";
 }
 
+// 只去掉最后一段，嵌套类的方法才归到最近的那个类
 function classOf(id) {
   const n = NODES[id];
-  return n.module + ":" + n.qualname.split(".")[0];
+  const dot = n.qualname.lastIndexOf(".");
+  return n.module + ":" + (dot > 0 ? n.qualname.slice(0, dot) : n.qualname);
 }
 // ─── 放置 / 关闭 / 引用计数 ─────────────────────────────────────
 function placeCard(id, parentHint) {
