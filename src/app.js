@@ -238,6 +238,27 @@ function renderLine(ln, host, ownerId) {
       });
     };
     row.appendChild(a);
+  } else if (c && c.candidates && c.candidates.length > 1) {
+    // 接收者类型不知道，同名方法有一堆：不假装解析到了某一个，
+    // 给出候选让人自己挑。悬停或点击都把气泡打开。
+    const a = document.createElement("span");
+    a.className = "anchor poly";
+    a.textContent = "◆" + (c.candidates.length > 9 ? "+" : c.candidates.length);
+    if (selectedCs === ln.cs) a.className += " on";
+    a.title = "接收者类型未知，同名方法有 " + c.candidates.length + " 个候选，点开挑一个";
+    const load = function (ev) {
+      showBubble(ln.cs, ev);
+      ensure(c.candidates).then(function () {
+        if (hoverCs === ln.cs) showBubble(ln.cs, ev);
+      });
+    };
+    a.onmouseenter = load;
+    a.onmouseleave = hideBubble;
+    a.onclick = function (ev) {
+      ev.stopPropagation();
+      load(ev);
+    };
+    row.appendChild(a);
   } else if (c) {
     const a = document.createElement("span");
     a.className = "anchor dead";
@@ -695,7 +716,11 @@ function argRows(cs) {
 }
 function confNote(c) {
   if (c.conf === "heur") return "启发式匹配（按名字唯一命中，可能错）";
-  if (c.conf === "poly") return "多态：静态只知道方法名，下面是全部同名实现";
+  if (c.conf === "poly") {
+    return c.to
+      ? "多态：静态只知道方法名，下面是全部同名实现"
+      : "接收者类型未知，没挑目标，下面是全部同名实现";
+  }
   return "精确匹配（同模块 / import / 类型推断 / self. 方法）";
 }
 function showBubble(cs, ev) {

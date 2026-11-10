@@ -34,6 +34,8 @@ pub struct Materializer {
     /// 全项目索引，第一次物化时从 symbol 表建一次
     by_name: Option<Arc<BTreeMap<String, Vec<String>>>>,
     by_method: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    by_class: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    by_qualname: Option<Arc<BTreeMap<String, Vec<String>>>>,
 }
 
 impl Materializer {
@@ -58,6 +60,8 @@ impl Materializer {
             done: BTreeSet::new(),
             by_name: None,
             by_method: None,
+            by_class: None,
+            by_qualname: None,
         })
     }
 
@@ -103,6 +107,8 @@ impl Materializer {
         self.load_global_indexes()?;
         acc.global_by_name = self.by_name.clone();
         acc.global_by_method = self.by_method.clone();
+        acc.global_by_class = self.by_class.clone();
+        acc.global_by_qualname = self.by_qualname.clone();
         acc.resolve();
 
         let written = self.persist(module, &acc)?;
@@ -120,6 +126,8 @@ impl Materializer {
         }
         let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut by_method: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut by_class: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut by_qualname: BTreeMap<String, Vec<String>> = BTreeMap::new();
         {
             let mut stmt = self.conn.prepare(
                 "SELECT module, qualname, kind FROM symbol
@@ -142,7 +150,19 @@ impl Materializer {
                     .to_string();
                 by_name.entry(bare.clone()).or_default().push(id.clone());
                 if kind == "method" {
-                    by_method.entry(bare).or_default().push(id);
+                    by_method.entry(bare).or_default().push(id.clone());
+                }
+                if kind == "class" || kind == "method" {
+                    by_qualname
+                        .entry(qualname.clone())
+                        .or_default()
+                        .push(id.clone());
+                }
+                if kind == "class" {
+                    by_class
+                        .entry(qualname.rsplit('.').next().unwrap_or(&qualname).to_string())
+                        .or_default()
+                        .push(id);
                 }
             }
         }
@@ -154,8 +174,18 @@ impl Materializer {
             v.sort();
             v.dedup();
         }
+        for v in by_class.values_mut() {
+            v.sort();
+            v.dedup();
+        }
+        for v in by_qualname.values_mut() {
+            v.sort();
+            v.dedup();
+        }
         self.by_name = Some(Arc::new(by_name));
         self.by_method = Some(Arc::new(by_method));
+        self.by_class = Some(Arc::new(by_class));
+        self.by_qualname = Some(Arc::new(by_qualname));
         Ok(())
     }
 

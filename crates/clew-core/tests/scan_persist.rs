@@ -399,6 +399,243 @@ fn conditional_and_nested_definitions_are_indexed() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A `mod.func()` call where `mod` is an imported module belongs to that
+/// module's top-level function, not to whichever class happens to define a
+/// method with the same name.
+#[test]
+fn module_receiver_resolves_to_its_top_level_function() {
+    let dir = std::env::temp_dir().join(format!("clew-scan-modrecv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("store")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(dir.join("store").join("__init__.py"), "").unwrap();
+    std::fs::write(
+        dir.join("store").join("ledger.py"),
+        "def get_entry(entry_id):\n\
+         \x20   return entry_id\n",
+    )
+    .unwrap();
+    // 模块级 import
+    std::fs::write(
+        dir.join("app.py"),
+        "from store import ledger\n\
+         \n\
+         \n\
+         def rollback(entry_id):\n\
+         \x20   return ledger.get_entry(entry_id)\n",
+    )
+    .unwrap();
+    // 函数体内 import，解析时也要看得到
+    std::fs::write(
+        dir.join("worker.py"),
+        "def preview(entry_id):\n\
+         \x20   from store import ledger\n\
+         \x20   entry = ledger.get_entry(entry_id)\n\
+         \x20   return entry\n",
+    )
+    .unwrap();
+    // 同名方法的干扰项，放在 tests 目录里
+    std::fs::write(
+        dir.join("tests").join("test_fake.py"),
+        "class _FakeLedger:\n\
+         \x20   def get_entry(self, entry_id):\n\
+         \x20       return None\n",
+    )
+    .unwrap();
+    let root = dir.canonicalize().unwrap();
+
+    let db_path = root.join("index.db");
+    let mut conn = open(&db_path).unwrap();
+    scan(&mut conn, &root, false).unwrap();
+    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+
+    for module in ["app", "worker"] {
+        let row: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT c.confidence, s.module || ':' || s.qualname, c.imported
+                   FROM call_site c JOIN symbol s ON s.id = c.dst_symbol
+                  WHERE c.project_id = ?1 AND c.module = ?2 AND c.target = 'get_entry'",
+                rusqlite::params![project_id, module],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap_or_else(|e| panic!("{module} has no resolved get_entry call: {e}"));
+        assert_eq!(row.0, "exact", "{module}: wrong confidence");
+        assert_eq!(
+            row.1, "store.ledger:get_entry",
+            "{module}: resolved to the wrong definition"
+        );
+        assert_eq!(
+            row.2.as_deref(),
+            Some("from store import ledger"),
+            "{module}: missing import label"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `from .session import X` inside a package `__init__.py` must resolve inside
+/// that package, and a class re-exported through `__init__` must resolve to the
+/// module that actually defines it. The receiver of `Cls().m()` is a call node,
+/// so the type has to come from the constructor, not from a local variable.
+#[test]
+fn package_relative_import_and_reexport_resolve() {
+    let dir = std::env::temp_dir().join(format!("clew-scan-pkgrel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("pkg")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("pkg").join("__init__.py"),
+        "from .session import RuntimeSession\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("pkg").join("session.py"),
+        "class RuntimeSession:\n\
+         \x20   def run(self, task):\n\
+         \x20       return task\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.py"),
+        "from pkg import RuntimeSession\n\
+         \n\
+         \n\
+         def go():\n\
+         \x20   return RuntimeSession().run(1)\n",
+    )
+    .unwrap();
+    // 同名方法的干扰项：兜底按方法名挑时会挑到它
+    std::fs::write(
+        dir.join("tests").join("test_run.py"),
+        "class BatchScenesRunner:\n\
+         \x20   def run(self, task):\n\
+         \x20       return None\n",
+    )
+    .unwrap();
+    let root = dir.canonicalize().unwrap();
+
+    let db_path = root.join("index.db");
+    let mut conn = open(&db_path).unwrap();
+    scan(&mut conn, &root, false).unwrap();
+    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+
+    // 包内相对 import：`pkg/__init__.py` 里的 `.session` 是 pkg.session，
+    // 不是少一层的 session
+    let source: String = conn
+        .query_row(
+            "SELECT source_module FROM import
+              WHERE project_id = ?1 AND module = 'pkg' AND local = 'RuntimeSession'",
+            [project_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, "pkg.session", "relative import resolved one level too high");
+
+    // 重导出 + 构造调用：RuntimeSession().run(1) 指到定义它的模块
+    let row: (String, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT c.confidence, s.module || ':' || s.qualname, c.typed
+               FROM call_site c LEFT JOIN symbol s ON s.id = c.dst_symbol
+              WHERE c.project_id = ?1 AND c.module = 'main' AND c.target = 'run'",
+            [project_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(row.0, "exact", "confidence should be exact");
+    assert_eq!(
+        row.1.as_deref(),
+        Some("pkg.session:RuntimeSession.run"),
+        "should resolve through the re-export, not to the test double"
+    );
+    assert!(
+        row.2.unwrap_or_default().contains("RuntimeSession"),
+        "the inferred type should be shown"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 按需物化只读一个文件，其它模块的类卡不在场。类型推断要靠全项目的
+/// 类表与 qualname 表，不能因为目标没物化就放弃。
+#[test]
+fn lazy_materialize_resolves_through_global_indexes() {
+    use clew_core::scan::materialize::Materializer;
+    use clew_core::scan::run::scan_with;
+
+    let dir = std::env::temp_dir().join(format!("clew-scan-lazypkg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("pkg")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("pkg").join("__init__.py"),
+        "from .session import RuntimeSession\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("pkg").join("session.py"),
+        "class RuntimeSession:\n\
+         \x20   def run(self, task):\n\
+         \x20       return task\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.py"),
+        "from pkg import RuntimeSession\n\
+         \n\
+         \n\
+         def go():\n\
+         \x20   return RuntimeSession().run(1)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("tests").join("test_run.py"),
+        "class BatchScenesRunner:\n\
+         \x20   def run(self, task):\n\
+         \x20       return None\n",
+    )
+    .unwrap();
+    let root = dir.canonicalize().unwrap();
+
+    let db_path = root.join("index.db");
+    let mut conn = open(&db_path).unwrap();
+    scan_with(&mut conn, &root, false, false, &mut |_, _, _, _| {}).unwrap();
+    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+    drop(conn);
+
+    let conn = open(&db_path).unwrap();
+    let mut mat = Materializer::open(project_id, conn).unwrap();
+    mat.ensure("main").unwrap();
+
+    let row: (String, Option<String>, Option<String>) = mat
+        .conn()
+        .query_row(
+            "SELECT c.confidence, s.module || ':' || s.qualname, c.typed
+               FROM call_site c LEFT JOIN symbol s ON s.id = c.dst_symbol
+              WHERE c.project_id = ?1 AND c.module = 'main' AND c.target = 'run'",
+            [project_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    drop(mat);
+
+    assert_eq!(row.0, "exact", "lazy path lost the type inference");
+    assert_eq!(
+        row.1.as_deref(),
+        Some("pkg.session:RuntimeSession.run"),
+        "lazy path resolved to the wrong definition"
+    );
+    assert!(row.2.unwrap_or_default().contains("RuntimeSession"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The progress bar must never jump backwards, and must end at 100%.
 #[test]
 fn scan_reports_monotonic_progress() {

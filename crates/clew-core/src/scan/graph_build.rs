@@ -106,6 +106,7 @@ struct RawCall {
     target: String,
     kind: CallKind,
     recv: Option<String>,
+    ctor: Option<String>,
     pos: Vec<String>,
     kwargs: Vec<(String, String)>,
     line: u32,
@@ -115,11 +116,16 @@ struct RawCall {
 pub struct Builder {
     src: Vec<u8>,
     module: String,
+    /// 这个文件是包的 `__init__.py`。相对 import 的基址要按包算，不能先退一层。
+    is_package: bool,
     cards: BTreeMap<String, Card>,
     calls: BTreeMap<String, Call>,
     raw_calls: BTreeMap<String, RawCall>,
     /// module -> local name -> import info
     imports: BTreeMap<String, BTreeMap<String, ImportInfo>>,
+    /// card id -> local name -> import info. 函数体里的 import 只对那个函数生效，
+    /// 但它同样决定 `skill_ledger.get_entry(...)` 指向哪里。
+    card_imports: BTreeMap<String, BTreeMap<String, ImportInfo>>,
     /// (module, class) -> method name -> card id
     methods: BTreeMap<(String, String), BTreeMap<String, String>>,
     /// class card id -> (module, base class names)
@@ -143,6 +149,10 @@ pub struct Builder {
     /// 与「同名方法有哪些候选」，否则这些调用只能落成未解析。
     pub(crate) global_by_name: Option<Arc<BTreeMap<String, Vec<String>>>>,
     pub(crate) global_by_method: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    /// 全项目 bare 类名 -> 类卡 id。按需物化时目标类不在场，靠它判断类型。
+    pub(crate) global_by_class: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    /// 全项目 qualname -> 卡 id，只收类与方法。类卡不在场时查方法用。
+    pub(crate) global_by_qualname: Option<Arc<BTreeMap<String, Vec<String>>>>,
     /// rows to persist
     out_modules: Vec<ModuleMeta>,
     out_symbols: Vec<SymbolMeta>,
@@ -283,10 +293,12 @@ impl Default for Builder {    fn default() -> Self {
         Self {
             src: Vec::new(),
             module: String::new(),
+            is_package: false,
             cards: BTreeMap::new(),
             calls: BTreeMap::new(),
             raw_calls: BTreeMap::new(),
             imports: BTreeMap::new(),
+            card_imports: BTreeMap::new(),
             methods: BTreeMap::new(),
             class_bases: BTreeMap::new(),
             class_attrs: BTreeMap::new(),
@@ -298,6 +310,8 @@ impl Default for Builder {    fn default() -> Self {
             symbols_only: false,
             global_by_name: None,
             global_by_method: None,
+            global_by_class: None,
+            global_by_qualname: None,
             out_modules: Vec::new(),
             out_symbols: Vec::new(),
             out_classes: Vec::new(),
@@ -357,6 +371,9 @@ impl Builder {
         }
         for (k, v) in other.card_locals {
             self.card_locals.entry(k).or_default().extend(v);
+        }
+        for (k, v) in other.card_imports {
+            self.card_imports.entry(k).or_default().extend(v);
         }
         self.class_ids.extend(other.class_ids);
         for (k, v) in other.class_by_qualname {
@@ -565,6 +582,11 @@ impl Builder {
     pub(crate) fn file(&mut self, file: &walker::PyFile, src: &[u8], root: Node, src_hash: String) {
         self.src = src.to_vec();
         self.module = file.module.clone();
+        self.is_package = file
+            .path
+            .file_name()
+            .map(|n| n == "__init__.py")
+            .unwrap_or(false);
 
         let mut cursor = root.walk();
         let mut main_guard = false;
@@ -591,8 +613,20 @@ impl Builder {
             ],
         ) {
             match item.kind() {
-                "import_statement" => self.collect_import(item),
-                "import_from_statement" => self.collect_import_from(item),
+                "import_statement" => {
+                    let found = self.collect_import(item);
+                    self.imports
+                        .entry(self.module.clone())
+                        .or_default()
+                        .extend(found);
+                }
+                "import_from_statement" => {
+                    let found = self.collect_import_from(item);
+                    self.imports
+                        .entry(self.module.clone())
+                        .or_default()
+                        .extend(found);
+                }
                 "function_definition" => self.add_function(item, "", false),
                 "class_definition" => self.add_class(item, ""),
                 _ => {}
@@ -628,14 +662,29 @@ impl Builder {
     }
 
     // ── imports ───────────────────────────────────────────────────
-    fn collect_import(&mut self, node: Node) {
+    /// 相对 import 的基址。`from .x import y` 在普通模块里先退掉自己的模块名，
+    /// 在包的 `__init__.py` 里则停在包本身：`pkg/__init__.py` 的 `.session`
+    /// 是 `pkg.session`，少算一层会指到一个并不存在的模块。
+    fn relative_base(&self, dots: usize) -> String {
+        let mut parts: Vec<&str> = self.module.split('.').collect();
+        if !self.is_package {
+            parts.pop();
+        }
+        for _ in 1..dots {
+            parts.pop();
+        }
+        parts.join(".")
+    }
+
+    fn collect_import(&mut self, node: Node) -> BTreeMap<String, ImportInfo> {
+        let mut out = BTreeMap::new();
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "dotted_name" => {
                     let full = self.text(child);
                     let local = full.split('.').next().unwrap_or(&full).to_string();
-                    self.imports.entry(self.module.clone()).or_default().insert(
+                    out.insert(
                         local.clone(),
                         ImportInfo {
                             module: full.clone(),
@@ -653,7 +702,7 @@ impl Builder {
                     ) {
                         let full = self.text(name);
                         let local = self.text(alias);
-                        self.imports.entry(self.module.clone()).or_default().insert(
+                        out.insert(
                             local.clone(),
                             ImportInfo {
                                 module: full,
@@ -668,9 +717,11 @@ impl Builder {
                 _ => {}
             }
         }
+        out
     }
 
-    fn collect_import_from(&mut self, node: Node) {
+    fn collect_import_from(&mut self, node: Node) -> BTreeMap<String, ImportInfo> {
+        let mut out = BTreeMap::new();
         let module_node = node.child_by_field_name("module_name");
         let mut base = module_node.map(|n| self.text(n)).unwrap_or_default();
 
@@ -678,19 +729,13 @@ impl Builder {
         if base.starts_with('.') {
             let dots = base.chars().take_while(|c| *c == '.').count();
             let rest = base.trim_start_matches('.').to_string();
-            let mut parts: Vec<&str> = self.module.split('.').collect();
-            if !parts.is_empty() {
-                parts.pop();
-            }
-            for _ in 1..dots {
-                parts.pop();
-            }
+            let up = self.relative_base(dots);
             base = if rest.is_empty() {
-                parts.join(".")
-            } else if parts.is_empty() {
+                up
+            } else if up.is_empty() {
                 rest
             } else {
-                format!("{}.{}", parts.join("."), rest)
+                format!("{}.{}", up, rest)
             };
         }
 
@@ -702,22 +747,14 @@ impl Builder {
                     let raw = self.text(ch);
                     let dots = raw.chars().take_while(|c| *c == '.').count();
                     let rest = raw.trim_start_matches('.').to_string();
-                    let mut parts: Vec<&str> = self.module.split('.').collect();
-                    if parts.len() > 0 {
-                        parts.pop();                       // drop the current module name
-                    }
-                    for _ in 1..dots {
-                        parts.pop();                       // one level up per extra dot
-                    }
-                    if !rest.is_empty() {
-                        base = if parts.is_empty() {
-                            rest
-                        } else {
-                            format!("{}.{}", parts.join("."), rest)
-                        };
+                    let up = self.relative_base(dots);
+                    base = if rest.is_empty() {
+                        up
+                    } else if up.is_empty() {
+                        rest
                     } else {
-                        base = parts.join(".");
-                    }
+                        format!("{}.{}", up, rest)
+                    };
                 }
             }
         }
@@ -728,7 +765,7 @@ impl Builder {
                 "dotted_name" if module_node.map(|m| m.id()) == Some(child.id()) => {}
                 "dotted_name" => {
                     let orig = self.text(child);
-                    self.imports.entry(self.module.clone()).or_default().insert(
+                    out.insert(
                         orig.clone(),
                         ImportInfo {
                             module: base.clone(),
@@ -746,7 +783,7 @@ impl Builder {
                     ) {
                         let orig = self.text(name);
                         let local = self.text(alias);
-                        self.imports.entry(self.module.clone()).or_default().insert(
+                        out.insert(
                             local.clone(),
                             ImportInfo {
                                 module: base.clone(),
@@ -761,6 +798,7 @@ impl Builder {
                 _ => {}
             }
         }
+        out
     }
 
     // ── functions and methods ─────────────────────────────────────
@@ -1082,6 +1120,20 @@ impl Builder {
             match stmt.kind() {
                 "block" => self.emit_block(stmt, owner, indent, out, locals, scope),
                 _ => {
+                    // 函数体里的 import 只对这个函数生效，但解析 `mod.func()` 要用到它
+                    if stmt.kind() == "import_statement" || stmt.kind() == "import_from_statement" {
+                        let found = if stmt.kind() == "import_statement" {
+                            self.collect_import(stmt)
+                        } else {
+                            self.collect_import_from(stmt)
+                        };
+                        if !found.is_empty() {
+                            self.card_imports
+                                .entry(owner.to_string())
+                                .or_default()
+                                .extend(found);
+                        }
+                    }
                     let calls = collect_calls(stmt);
                     let ln = stmt.start_position().row as u32 + 1;
                     if calls.is_empty() {
@@ -1183,9 +1235,12 @@ impl Builder {
     fn record_call(&mut self, cs_id: String, owner: &str, call: Node) {
         // keep the call site even when the callee is unknown, so the anchor
         // never points at a missing record
-        let (target, kind, recv) = match call.child_by_field_name("function") {
-            Some(func) => classify(&self.src, func),
-            None => (None, CallKind::Other, None),
+        let (target, kind, recv, ctor) = match call.child_by_field_name("function") {
+            Some(func) => {
+                let c = classify(&self.src, func);
+                (c.target, c.kind, c.recv, c.ctor)
+            }
+            None => (None, CallKind::Other, None, None),
         };
         let target = target.unwrap_or_default();
 
@@ -1215,6 +1270,7 @@ impl Builder {
                 target,
                 kind,
                 recv,
+                ctor,
                 pos,
                 kwargs,
                 line: call.start_position().row as u32 + 1,
@@ -1422,16 +1478,86 @@ impl Builder {
                                 }
                             }
                         }
+                        // 接收者是导入进来的模块。`from tools import skill_ledger` 之后
+                        // `skill_ledger.get_entry(...)` 指的是那个模块的顶层定义，不是某个
+                        // 同名类的方法。只按方法名在全项目里挑，会挑到别人的测试替身。
+                        if chosen.is_none() {
+                            if let Some(recv) = &raw.recv {
+                                if let Some(imp) = self.import_of(&call.from, &module, recv).cloned()
+                                {
+                                    // `import a.b` 之后 a.b.f，接收者就是模块 a.b。
+                                    // `from a import b` 之后 b.f，b 可能是子模块 a.b，也可能是 a 里的名字。
+                                    let owners: Vec<String> = if imp.module_import {
+                                        vec![imp.module.clone()]
+                                    } else {
+                                        vec![
+                                            format!("{}.{}", imp.module, imp.orig),
+                                            imp.module.clone(),
+                                        ]
+                                    };
+                                    for owner in &owners {
+                                        let want = Graph::card_id(owner, &raw.target);
+                                        if self.card_known(&want, &raw.target, by_name.as_ref()) {
+                                            chosen = Some(want);
+                                            conf = Confidence::Exact;
+                                            imported = Some(import_label(&imp));
+                                            break;
+                                        }
+                                    }
+                                    if chosen.is_none() {
+                                        let cls_id = Graph::card_id(&imp.module, &imp.orig);
+                                        if let Some(mid) = self.find_method(&cls_id, &raw.target, 0)
+                                        {
+                                            chosen = Some(mid);
+                                            conf = Confidence::Exact;
+                                            imported = Some(import_label(&imp));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // 接收者是构造调用：`Path().resolve()` 的类型就是 Path。
+                        // 项目里没有这个类（标准库或第三方）就到此为止，别去猜，
+                        // 但要把它来自哪个模块记下来，界面上标成外部类型。
+                        if chosen.is_none() {
+                            if let Some(ctor) = &raw.ctor {
+                                match self.resolve_class(&call.from, ctor) {
+                                    Some(cls_id) => {
+                                        if let Some(mid) = self.find_method(&cls_id, &raw.target, 0)
+                                        {
+                                            chosen = Some(mid);
+                                            conf = Confidence::Exact;
+                                            typed = Some(format!(
+                                                "{ctor}() → {}",
+                                                short_name(&cls_id)
+                                            ));
+                                        }
+                                    }
+                                    None => {
+                                        if let Some(imp) =
+                                            self.import_of(&call.from, &module, ctor)
+                                        {
+                                            typed = Some(format!(
+                                                "{ctor}() → 外部（{}）",
+                                                imp.module
+                                            ));
+                                            imported = Some(import_label(imp));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if chosen.is_none() {
                             if let Some(list) = by_method.get(&raw.target) {
-                                if list.len() >= 2 {
+                                if list.len() == 1 {
                                     chosen = Some(list[0].clone());
+                                    conf = Confidence::Heur;
+                                } else if list.len() > 1 {
+                                    // 接收者类型未知，同名方法又不止一个：只给候选，
+                                    // 不挑一个装作解析到了。挑第一个就是在瞎猜。
                                     candidates =
                                         list.iter().take(MAX_CANDIDATES).cloned().collect();
                                     conf = Confidence::Poly;
-                                } else if list.len() == 1 {
-                                    chosen = Some(list[0].clone());
-                                    conf = Confidence::Heur;
                                 }
                             }
                         }
@@ -1441,30 +1567,32 @@ impl Builder {
 
                 if chosen.is_none() && raw.kind == CallKind::Name {
                     let same = Graph::card_id(&module, &raw.target);
+                    // import 命中但目标卡不在场（按需模式，或重导出）时不能就地收手，
+                    // 下面还有按全项目名字唯一命中的兜底。
+                    let mut label_from_import = None;
                     if self.cards.contains_key(&same) {
                         chosen = Some(same);
                         conf = Confidence::Exact;
-                    } else if let Some(imp) = self.imports.get(&module).and_then(|m| m.get(&raw.target)) {
+                    } else if let Some(imp) = self.import_of(&call.from, &module, &raw.target) {
                         let target_id = Graph::card_id(&imp.module, &imp.orig);
-                        if self.cards.contains_key(&target_id) {
+                        if self.card_known(&target_id, &raw.target, by_name.as_ref()) {
                             chosen = Some(target_id);
                             conf = Confidence::Exact;
-                            imported = Some(if imp.module_import {
-                                format!("import {}{}", imp.module, if imp.alias { format!(" as {}", imp.local) } else { String::new() })
-                            } else {
-                                format!(
-                                    "from {} import {}{}",
-                                    imp.module,
-                                    imp.orig,
-                                    if imp.alias { format!(" as {}", imp.local) } else { String::new() }
-                                )
-                            });
                         }
-                    } else if let Some(hit) = by_name.get(&raw.target) {
-                        if hit.len() == 1 {
-                            chosen = Some(hit[0].clone());
-                            conf = Confidence::Heur;
+                        label_from_import = Some(import_label(imp));
+                    }
+                    if chosen.is_none() {
+                        if let Some(hit) = by_name.get(&raw.target) {
+                            if hit.len() == 1 {
+                                chosen = Some(hit[0].clone());
+                                conf = Confidence::Heur;
+                            }
                         }
+                    }
+                    if imported.is_none() {
+                        // 解析不到也要留下来源：`Path(__file__)` 这类名字至少让人看出
+                        // 它来自外部模块，不是项目里丢了定义
+                        imported = label_from_import;
                     }
                 }
             }
@@ -1501,30 +1629,88 @@ impl Builder {
         }
     }
 
+    /// 这个 id 是不是一个类。类卡可能还没物化（按需模式下只读了几个文件），
+    /// 那就查全项目的类表。
+    fn is_class(&self, id: &str) -> bool {
+        if let Some(c) = self.cards.get(id) {
+            return c.kind == CardKind::Class;
+        }
+        let bare = id
+            .split_once(':')
+            .map(|(_, q)| q)
+            .unwrap_or(id)
+            .rsplit('.')
+            .next()
+            .unwrap_or(id);
+        self.global_by_class
+            .as_ref()
+            .and_then(|m| m.get(bare))
+            .map_or(false, |ids| ids.iter().any(|x| x == id))
+    }
+
+    /// bare 类名 -> 类卡 id，只接受唯一命中。
+    fn global_class(&self, name: &str) -> Option<String> {
+        let ids = self.global_by_class.as_ref()?.get(name)?;
+        if ids.len() == 1 {
+            return Some(ids[0].clone());
+        }
+        None
+    }
+
     fn resolve_class(&self, from_card: &str, raw: &str) -> Option<String> {
         let module = from_card.split(':').next().unwrap_or("");
         let direct = Graph::card_id(module, raw);
-        if let Some(c) = self.cards.get(&direct) {
-            if c.kind == CardKind::Class {
-                return Some(direct);
-            }
+        if self.is_class(&direct) {
+            return Some(direct);
         }
-        if let Some(imp) = self.imports.get(module).and_then(|m| m.get(raw)) {
+        if let Some(imp) = self.import_of(from_card, module, raw) {
             let id = Graph::card_id(&imp.module, &imp.orig);
-            if let Some(c) = self.cards.get(&id) {
-                if c.kind == CardKind::Class {
-                    return Some(id);
-                }
+            if self.is_class(&id) {
+                return Some(id);
             }
         }
-        self.class_by_qualname.get(raw).cloned()
+        self.class_by_qualname
+            .get(raw)
+            .cloned()
+            .or_else(|| self.global_class(raw))
+    }
+
+    /// 名称在这个位置解析到哪个导入：先看所在卡片自己的 import，
+    /// 再看模块的。函数体里 `from tools import skill_ledger` 不会出现在模块表里。
+    fn import_of(&self, from_card: &str, module: &str, name: &str) -> Option<&ImportInfo> {
+        self.card_imports
+            .get(from_card)
+            .and_then(|m| m.get(name))
+            .or_else(|| self.imports.get(module).and_then(|m| m.get(name)))
+    }
+
+    /// 这张卡在项目里存在吗。按需物化时别的模块还没解析，只看 `self.cards`
+    /// 会把项目里确实存在的目标判成不存在，所以再查一次全项目的名字表。
+    fn card_known(&self, id: &str, bare: &str, by_name: &BTreeMap<String, Vec<String>>) -> bool {
+        if self.cards.contains_key(id) {
+            return true;
+        }
+        by_name
+            .get(bare)
+            .map_or(false, |ids| ids.iter().any(|x| x == id))
     }
 
     fn find_method(&self, class_id: &str, name: &str, depth: usize) -> Option<String> {
         if depth > 6 {
             return None;
         }
-        let card = self.cards.get(class_id)?;
+        let Some(card) = self.cards.get(class_id) else {
+            // 类卡还没物化：按全项目的 qualname 直接找这个方法，
+            // 只接受唯一命中，继承链这时候查不到。
+            let qualname = class_id.split_once(':').map(|(_, q)| q)?;
+            let want = format!("{qualname}.{name}");
+            let ids = self.global_by_qualname.as_ref()?.get(&want)?;
+            return if ids.len() == 1 {
+                Some(ids[0].clone())
+            } else {
+                None
+            };
+        };
         if let Some(mid) = self
             .methods
             .get(&(card.module.clone(), card.qualname.clone()))
@@ -1658,10 +1844,25 @@ fn is_main_guard(src: &[u8], node: Node) -> bool {
 }
 
 /// Classify the callee part of a call such as `def f():`
-fn classify(src: &[u8], func: Node) -> (Option<String>, CallKind, Option<String>) {
+/// 一个调用点被调者的形状：叫什么、怎么调、接收者是什么。
+struct Callee {
+    target: Option<String>,
+    kind: CallKind,
+    recv: Option<String>,
+    /// `C(...).m()`：接收者是构造调用，类型就是那个类名
+    ctor: Option<String>,
+}
+
+fn classify(src: &[u8], func: Node) -> Callee {
     let text = |n: Node| n.utf8_text(src).unwrap_or("").to_string();
+    let plain = |target: Option<String>, kind: CallKind, recv: Option<String>| Callee {
+        target,
+        kind,
+        recv,
+        ctor: None,
+    };
     match func.kind() {
-        "identifier" => (Some(text(func)), CallKind::Name, None),
+        "identifier" => plain(Some(text(func)), CallKind::Name, None),
         "attribute" => {
             let obj = func.child_by_field_name("object");
             let attr = func.child_by_field_name("attribute");
@@ -1670,9 +1871,9 @@ fn classify(src: &[u8], func: Node) -> (Option<String>, CallKind, Option<String>
                 Some(o) if o.kind() == "identifier" => {
                     let name = text(o);
                     if name == "self" || name == "cls" {
-                        (attr_name, CallKind::SelfRef, Some(name))
+                        plain(attr_name, CallKind::SelfRef, Some(name))
                     } else {
-                        (attr_name, CallKind::Attr, Some(name))
+                        plain(attr_name, CallKind::Attr, Some(name))
                     }
                 }
                 Some(o) if o.kind() == "attribute" => {
@@ -1680,15 +1881,22 @@ fn classify(src: &[u8], func: Node) -> (Option<String>, CallKind, Option<String>
                     let inner_attr = o.child_by_field_name("attribute");
                     if let (Some(io), Some(ia)) = (inner_obj, inner_attr) {
                         if text(io) == "self" {
-                            return (attr_name, CallKind::SelfAttr, Some(text(ia)));
+                            return plain(attr_name, CallKind::SelfAttr, Some(text(ia)));
                         }
                     }
-                    (attr_name, CallKind::Attr, None)
+                    plain(attr_name, CallKind::Attr, None)
                 }
-                _ => (attr_name, CallKind::Attr, None),
+                // `Path().resolve()`：接收者是构造调用，类型能直接读出来
+                Some(o) if o.kind() == "call" => Callee {
+                    target: attr_name,
+                    kind: CallKind::Attr,
+                    recv: None,
+                    ctor: class_name_of_call(src, o),
+                },
+                _ => plain(attr_name, CallKind::Attr, None),
             }
         }
-        _ => (None, CallKind::Other, None),
+        _ => plain(None, CallKind::Other, None),
     }
 }
 
@@ -1789,6 +1997,20 @@ fn class_of_qualname(qualname: &str) -> Option<String> {
 /// large project. Every candidate becomes a row in `call_candidate`, and the
 /// anchor only ever shows a short list, so the tail is dropped.
 const MAX_CANDIDATES: usize = 8;
+
+/// 调用点来源的展示文本，工具提示与「来源：」那一行都用它。
+fn import_label(imp: &ImportInfo) -> String {
+    let suffix = if imp.alias {
+        format!(" as {}", imp.local)
+    } else {
+        String::new()
+    };
+    if imp.module_import {
+        format!("import {}{}", imp.module, suffix)
+    } else {
+        format!("from {} import {}{}", imp.module, imp.orig, suffix)
+    }
+}
 
 fn short_name(card_id: &str) -> String {
     card_id
