@@ -504,20 +504,63 @@ fn scan_guard<'a>(state: &'a State<'_, AppState>) -> std::sync::MutexGuard<'a, O
 }
 
 /// 入口面板的搜索：命中文件名会列出该文件的全部定义，命中定义名只列命中的。
+/// 一次搜索的回包：排序好的命中，加上被种类过滤挡下的数量。
+#[derive(Serialize)]
+struct SearchPayload {
+    hits: Vec<clew_core::search::Hit>,
+    /// kind -> 被过滤掉的命中数，界面用来提示「另有 N 个方法命中」
+    suppressed: Vec<(String, usize)>,
+}
+
 #[tauri::command]
 fn search(
     q: String,
+    kinds: Option<Vec<String>>,
     limit: Option<usize>,
+    ctx: Option<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<walk::SearchFile>, String> {
+) -> Result<SearchPayload, String> {
     let guard = index_guard(&state);
     let index = index_or(&guard)?;
-    let mut rows = walk::search(index.mat.conn(), index.project_id, &q, limit.unwrap_or(200))
-        .map_err(|e| e.to_string())?;
-    for r in rows.iter_mut() {
-        r.path = walk::rel_path(&index.root, &r.path);
+    let table = index
+        .mat
+        .search_index()
+        .ok_or_else(|| "搜索索引还没建好".to_string())?;
+    let want: Vec<clew_core::search::Kind> = match kinds {
+        Some(list) if !list.is_empty() => list
+            .iter()
+            .filter_map(|k| clew_core::search::Kind::parse(k))
+            .collect(),
+        _ => vec![
+            clew_core::search::Kind::Func,
+            clew_core::search::Kind::Method,
+            clew_core::search::Kind::Class,
+            clew_core::search::Kind::File,
+            clew_core::search::Kind::Mod,
+        ],
+    };
+    let page = clew_core::search::run(
+        &table,
+        &clew_core::search::Query {
+            text: &q,
+            kinds: want,
+            ctx_module: ctx.as_deref(),
+            limit: limit.unwrap_or(200),
+        },
+    );
+    let root = index.root.clone();
+    let mut hits = page.hits;
+    for h in hits.iter_mut() {
+        h.path = walk::rel_path(&root, &h.path);
     }
-    Ok(rows)
+    Ok(SearchPayload {
+        hits,
+        suppressed: page
+            .suppressed
+            .into_iter()
+            .map(|(k, n)| (k.to_string(), n))
+            .collect(),
+    })
 }
 
 /// 用户自己的入口：收藏与最近打开，存在应用数据目录，不跟索引一起删。

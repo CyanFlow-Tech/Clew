@@ -259,16 +259,34 @@
     #root-star.on{opacity:1}
     .rb-caret{color:var(--dim);font-size:9px}
 
-    /* 入口面板：左栏入口，右栏文件树，两栏各自搜索 */
-    #entry-panel{position:fixed;left:12px;top:88px;width:min(820px,calc(100vw - 24px));
-      height:min(626px,calc(100vh - 108px));
+    /* 入口面板：上排自定义入口与最近，中间搜索带种类勾选，下排符号与文件结果 */
+    #entry-panel{position:fixed;left:12px;top:88px;width:min(860px,calc(100vw - 24px));
+      height:min(660px,calc(100vh - 108px));
       background:#161b22;border:1px solid #30363d;border-radius:10px;
       box-shadow:0 24px 60px #000b;display:flex;flex-direction:column;z-index:60;overflow:hidden}
     #entry-panel[hidden]{display:none}
+    .ep-top{display:flex;flex:0 0 auto;max-height:38%;min-height:0;background:#141920;
+      border-bottom:1px solid #30363d}
     .ep-cols{display:flex;flex:1;min-height:0}
-    .ep-col-l{flex:0 0 340px;width:340px;max-width:60%;border-right:1px solid #262c34;
-      display:flex;flex-direction:column;min-height:0;background:#141920}
+    .ep-col-l{flex:0 0 42%;width:42%;border-right:1px solid #262c34;
+      display:flex;flex-direction:column;min-height:0}
     .ep-col-r{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+    /* 搜索带是下排的抬头：底色比上排亮一档，和下面两块连成一组 */
+    .ep-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;flex:none;
+      border-bottom:1px solid #20262e;background:transparent}
+    .ep-bar input{flex:1;min-width:0;background:#1a2029;border:1px solid #2a313a;
+      border-radius:5px;height:26px;padding:0 9px;color:var(--tx);font:inherit;
+      font-size:12px;outline:0}
+    .ep-bar input::placeholder{color:#525b66}
+    .ep-bar input:focus{border-color:#3d4f66;background:#1d2530}
+    .ep-kinds{display:flex;gap:9px;font-size:11.5px;color:#8b95a2;flex:none}
+    .ep-kinds label{display:flex;align-items:center;gap:3px;cursor:pointer;
+      user-select:none;-webkit-user-select:none}
+    .ep-kinds label:hover{color:#c6d0da}
+    .ep-kinds input{margin:0;accent-color:var(--acc);width:12px;height:12px}
+    .ep-filt{padding:6px 12px;color:#6b7480;font-size:11px}
+    .ep-more{color:var(--acc);cursor:pointer}
+    .ep-more:hover{text-decoration:underline}
     .ep-head{display:flex;align-items:center;gap:7px;padding:9px 12px 7px;
       color:#8b95a2;font-size:11px;letter-spacing:.5px;flex:none}
     .ep-head .n{color:#4a525c}
@@ -298,6 +316,11 @@
       cursor:pointer}
     .ep-grp .n{color:#4a525c}
     .ep-grp:hover{background:#1b222c}
+    .ep-grp .arw{width:11px;flex:none;color:#5b6472;font-size:9px;text-align:center}
+    .ep-grp .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ep-grp .hitmark{color:#ffd479;font-size:10px;margin-left:6px;letter-spacing:0}
+    .ep-grp .tail .ln{max-width:210px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+    .ep-grp .tail .ln:hover{color:var(--acc)}
     .ep-node{display:flex;align-items:center;gap:5px;padding:2px 14px 2px 0;cursor:pointer;
       font-size:12px;white-space:nowrap;border-left:2px solid transparent}
     .ep-node:hover{background:#1d242e}
@@ -317,7 +340,8 @@
     .ep-node b{color:#ffd479;font-weight:600;background:rgba(255,212,121,.10);border-radius:2px}
     .ep-dot{width:5px;height:5px;border-radius:3px;background:#f0883e;flex:none;opacity:.8}
     .ep-empty{padding:8px 12px;color:#5f6874;font-size:11.5px}
-    .ep-left .ep-node .ln{max-width:94px;overflow:hidden;text-overflow:ellipsis}
+    /* 尾部放所在容器：符号给模块、文件给目录、模块给父模块，长了截断 */
+    .ep-node .ln{max-width:210px;overflow:hidden;text-overflow:ellipsis}
     .ep-foot{border-top:1px solid #262c34;padding:6px 12px;color:#4a525c;font-size:10.5px;
       display:flex;gap:14px;flex:none;background:#141920}
     .ep-foot .k{color:#6b7480}
@@ -1414,8 +1438,9 @@
   }
 
   // ── 入口面板 ────────────────────────────────────────────────────
-  // 左栏是入口（自定义 / 最近 / 扫描到的），右栏是文件树。两栏各有一个
-  // 输入框，作用域分开：左边只在入口里找，右边找全项目。
+  // 四块：上面自定义入口与最近入口常驻，中间一条输入带种类勾选，下面符号结果
+  // 与文件结果。空查询时下面两块退回扫描入口与文件树。搜索由后端统一打分，
+  // 前端只按种类分队渲染。
   const FLAG_SVG =
     '<svg viewBox="0 0 12 12" width="12" height="12" ' +
     'style="position:static;inset:auto;width:12px;height:12px;display:block">' +
@@ -1432,42 +1457,61 @@
       "</svg>"
     );
   }
-  const ICON_FOLDER =
-    panelIcon('<path d="M1.5 3.3h3.1l1 1.2h4.9v5.9H1.5z"/>');
+  const ICON_FOLDER = panelIcon('<path d="M1.5 3.3h3.1l1 1.2h4.9v5.9H1.5z"/>');
   const ICON_FOLDER_OPEN =
     panelIcon('<path d="M1.5 3.3h3.1l1 1.2h4.9v1.2H1.5z"/><path d="M1.5 5.7h9.4l-1.3 4.7H1.5z"/>');
   const ICON_FILE =
     panelIcon('<path d="M3.1 1.6h3.4l2.4 2.4v6.4H3.1z"/><path d="M6.5 1.6v2.4h2.4"/>');
 
+  const KIND_LABELS = [
+    ["func", "函数"],
+    ["method", "方法"],
+    ["class", "类"],
+    ["file", "文件"],
+    ["mod", "模块"],
+  ];
+  const KINDS_KEY = "clew.searchKinds";
+
   const panel = document.createElement("div");
   panel.id = "entry-panel";
   panel.hidden = true;
   panel.innerHTML =
+    '<div class="ep-top">' +
+      '<div class="ep-col-l"><div class="ep-head">自定义入口<span class="n" id="ep-fav-count"></span></div>' +
+        '<div class="ep-list" id="ep-fav-list"></div></div>' +
+      '<div class="ep-col-r"><div class="ep-head">最近<span class="n" id="ep-recent-count"></span></div>' +
+        '<div class="ep-list" id="ep-recent-list"></div></div>' +
+    "</div>" +
+    '<div class="ep-bar">' +
+      '<input id="ep-q" placeholder="搜索 函数 / 方法 / 类 / 文件 / 模块" autocomplete="off">' +
+      '<div class="ep-kinds">' +
+        KIND_LABELS.map(
+          ([k, label]) =>
+            '<label title="Ctrl+' + (KIND_LABELS.findIndex((x) => x[0] === k) + 1) + '">' +
+            '<input type="checkbox" data-kind="' + k + '">' + label + "</label>"
+        ).join("") +
+      "</div>" +
+    "</div>" +
     '<div class="ep-cols">' +
-      '<div class="ep-col-l ep-left">' +
-        '<div class="ep-head">入口<span class="n" id="ep-entry-count"></span></div>' +
-        '<div class="ep-sf"><input id="ep-ql" placeholder="过滤入口" autocomplete="off">' +
-          '<span class="ep-scope">仅入口</span></div>' +
-        '<div class="ep-list" id="ep-left-list"></div>' +
-      "</div>" +
-      '<div class="ep-col-r">' +
-        '<div class="ep-head">文件<span class="n" id="ep-file-count"></span></div>' +
-        '<div class="ep-sf"><input id="ep-qr" placeholder="搜索文件或函数" autocomplete="off">' +
-          '<span class="ep-scope">全项目</span></div>' +
-        '<div class="ep-list" id="ep-right-list"></div>' +
-      "</div>" +
+      '<div class="ep-col-l ep-left"><div class="ep-head">符号<span class="n" id="ep-sym-count"></span></div>' +
+        '<div class="ep-list" id="ep-sym-list"></div></div>' +
+      '<div class="ep-col-r"><div class="ep-head">文件与模块<span class="n" id="ep-path-count"></span></div>' +
+        '<div class="ep-list" id="ep-path-list"></div></div>' +
     "</div>" +
     '<div class="ep-foot">' +
       '<span><span class="k">↵</span> 设为根</span>' +
       '<span><span class="k">⚑</span> 标记入口</span>' +
+      '<span><span class="k">Ctrl+1..5</span> 种类</span>' +
       '<span class="right" id="ep-marked"></span>' +
     "</div>";
   document.body.appendChild(panel);
 
-  const ql = panel.querySelector("#ep-ql");
-  const qr = panel.querySelector("#ep-qr");
-  const leftList = panel.querySelector("#ep-left-list");
-  const rightList = panel.querySelector("#ep-right-list");
+  const qInput = panel.querySelector("#ep-q");
+  const favEntryList = panel.querySelector("#ep-fav-list");
+  const recentEntryList = panel.querySelector("#ep-recent-list");
+  const symHitList = panel.querySelector("#ep-sym-list");
+  const pathHitList = panel.querySelector("#ep-path-list");
+  const kindBoxes = Array.from(panel.querySelectorAll("[data-kind]"));
 
   let panelOpen = false;
   let fileCache = null;              // files() 的结果，懒加载一次
@@ -1475,19 +1519,56 @@
   let symCache = new Map();          // module -> SymbolRow[]
   let rootData = { favorites: [], recent: [] };
   let searchSeq = 0;
+  let hits = { syms: [], paths: [], suppressed: [] };
   const openDirs = new Set();
   const openFiles = new Set();
   const openGroups = new Set();
+  const collapsedFiles = new Set();   // 结果里被收起的文件组
+
+  // 勾选状态落盘，重开软件不用再拨一遍
+  const kinds = { func: true, method: true, class: true, file: true, mod: true };
+  try {
+    const saved = JSON.parse(localStorage.getItem(KINDS_KEY) || "null");
+    if (saved) KIND_LABELS.forEach(([k]) => { kinds[k] = saved[k] !== false; });
+  } catch (err) {
+    /* 读不出来就全选 */
+  }
+  function saveKinds() {
+    try {
+      localStorage.setItem(KINDS_KEY, JSON.stringify(kinds));
+    } catch (err) {
+      /* 隐私模式写不进就算了 */
+    }
+  }
+  function syncBoxes() {
+    kindBoxes.forEach((b) => { b.checked = kinds[b.dataset.kind] !== false; });
+  }
+  function enabledKinds() {
+    return KIND_LABELS.map(([k]) => k).filter((k) => kinds[k]);
+  }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
-  function hl(text, q) {
-    if (!q) return esc(text);
-    const i = text.toLowerCase().indexOf(q.toLowerCase());
-    if (i < 0) return esc(text);
-    return esc(text.slice(0, i)) + "<b>" + esc(text.slice(i, i + q.length)) + "</b>" +
-      esc(text.slice(i + q.length));
+  function hl(text) {
+    return esc(text);
+  }
+  /// 后端给的是字节偏移，纯 ASCII 时与 JS 下标一致，否则放弃上色
+  function markSpans(text, spans) {
+    if (!spans || !spans.length) return esc(text);
+    let bytes = 0;
+    for (let i = 0; i < text.length; i++) bytes += text.charCodeAt(i) < 0x80 ? 1 : 3;
+    if (bytes !== text.length) return esc(text);
+    let out = "";
+    let last = 0;
+    spans.forEach(function (pair) {
+      const s = pair[0];
+      const e = pair[1];
+      if (s < last || e > text.length) return;
+      out += esc(text.slice(last, s)) + "<b>" + esc(text.slice(s, e)) + "</b>";
+      last = e;
+    });
+    return out + esc(text.slice(last));
   }
   function splitId(id) {
     const i = id.indexOf(":");
@@ -1497,7 +1578,6 @@
   }
   function shortName(id) {
     const parts = splitId(id);
-    // 模块体没有函数名，用模块最后一段当名字，避免出现在一长串 "<module>"
     if (parts.qualname === "<module>") {
       return parts.module.split(".").pop() || parts.module;
     }
@@ -1511,20 +1591,67 @@
   function scannedEntries() {
     return (typeof ENTRIES !== "undefined" ? ENTRIES : []).filter((e) => e && e.id);
   }
+  function activeModule() {
+    const id = window.getActiveRoot ? window.getActiveRoot() : null;
+    return id ? splitId(id).module : null;
+  }
 
-  // 一行入口：名字、文件、旗标
-  function entryRow(id, q) {
+  // 一行入口：名字、文件、旗标。入口栏不参与打分，只按原样列。
+  function entryRow(id) {
     const star = rootData.favorites.indexOf(id) >= 0;
     const isEntry = scannedEntries().some((e) => e.id === id);
     return (
-      '<div class="ep-node sym" data-root="' + esc(id) + '" style="padding-left:12px">' +
+      '<div class="ep-node sym" data-root="' + esc(id) + '">' +
         '<span class="ic">\u0192</span>' +
-        '<span class="nm">' + hl(shortName(id), q) + "</span>" +
+        '<span class="nm">' + hl(shortName(id)) + "</span>" +
         (isEntry ? '<span class="ep-dot" title="扫描器认定的入口"></span>' : "") +
         '<span class="tail">' +
-          '<span class="ln">' + esc(fileNameOf(splitId(id).module)) + "</span>" +
+          '<span class="ln" title="' + esc(fileNameOf(splitId(id).module)) + '">' +
+            esc(splitId(id).module) + "</span>" +
           '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(id) +
             '" title="标记入口">' + FLAG_SVG + "</span>" +
+        "</span>" +
+      "</div>"
+    );
+  }
+
+  // 一行搜索结果。符号可以设为根，文件与模块点开回到文件树里那一行。
+  //
+  // 名字只放最后一段，尾部放它所在的容器，这样同名的 main 能分清：
+  // 符号给模块与行号，文件给目录，模块给父模块。命中的高亮永远落在名字上，
+  // 而名字和 spans 都按最后一段算，两者才对得上。
+  function hitRow(h, indent) {
+    const isSymbol = h.kind === "func" || h.kind === "method" || h.kind === "class";
+    const pad = indent ? ' style="padding-left:' + indent + 'px"' : "";
+    const star = isSymbol && rootData.favorites.indexOf(h.card_id) >= 0;
+    const label = isSymbol
+      ? (h.qualname.split(".").pop() || h.qualname)
+      : h.kind === "file"
+        ? (h.path.split("/").pop() || h.path)
+        : (h.module.split(".").pop() || h.module);
+    const icon = h.kind === "class" ? "C" : h.kind === "file" ? ICON_FILE : h.kind === "mod" ? "\u25a4" : "\u0192";
+    const text = h.field === "name" ? markSpans(label, h.spans) : esc(label);
+    const dir = h.path.split("/").slice(0, -1).join("/");
+    const where = isSymbol
+      ? (indent ? "L" + h.def_line : h.module + ":" + h.def_line)
+      : h.kind === "file"
+        ? (dir || ".")
+        : (h.module.split(".").slice(0, -1).join(".") ||
+           (h.path.split("/").pop() || dir || "."));
+    const tailTitle = isSymbol ? h.path + ":" + h.def_line : h.path;
+    const attrs = isSymbol
+      ? ' data-root="' + esc(h.card_id) + '"'
+      : ' data-open="' + esc(h.module) + '"';
+    return (
+      '<div class="ep-node sym" data-kindrow="' + h.kind + '"' + attrs + pad + ">" +
+        '<span class="ic">' + icon + "</span>" +
+        '<span class="nm">' + text + "</span>" +
+        '<span class="tail">' +
+          '<span class="ln" title="' + esc(tailTitle) + '">' + esc(where) + "</span>" +
+          (isSymbol
+            ? '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(h.card_id) +
+              '" title="标记入口">' + FLAG_SVG + "</span>"
+            : "") +
         "</span>" +
       "</div>"
     );
@@ -1540,50 +1667,49 @@
     return groups;
   }
 
-  function renderLeft(raw) {
-    const q = (raw || "").trim();
-    const key = q.toLowerCase();
-    const match = (id) => shortName(id).toLowerCase().indexOf(key) >= 0;
-
-    const favs = rootData.favorites.filter((id) => !key || match(id));
-    const recent = rootData.recent.filter(
-      (id) => rootData.favorites.indexOf(id) < 0 && (!key || match(id))
-    );
-    const scanned = scannedEntries().filter((e) => !key || match(e.id));
-
-    // 左侧只在自己的入口集合里找，不碰全项目
-    let html = '<div class="ep-sect">自定义入口<span class="n">' +
-      (key ? favs.length + "/" + rootData.favorites.length : rootData.favorites.length) +
-      "</span></div>";
-    html += favs.length
-      ? favs.map((id) => entryRow(id, q)).join("")
-      : '<div class="ep-empty">' +
-        (key ? "没有匹配" : "在右栏给函数按 ⚑ 就会出现在这里") + "</div>";
-
-    if (recent.length) {
-      html += '<div class="ep-sect">最近</div>' + recent.map((id) => entryRow(id, q)).join("");
-    }
-
-    if (scanned.length) {
-      html += '<div class="ep-sect">扫描入口<span class="n">' +
-        (key ? scanned.length + "/" + scannedEntries().length : scannedEntries().length) +
-        "</span></div>";
-      const groups = scanGroups(scanned);
-      groups.forEach((rows, name) => {
-        const open = key ? true : openGroups.has(name);
-        html += '<div class="ep-grp" data-group="' + esc(name) + '"><span>' +
-          (open ? "▾" : "▸") + "</span>" + esc(name) +
-          '<span class="n">' + rows.length + "</span></div>";
-        if (open) html += rows.map((r) => entryRow(r.id, q)).join("");
-      });
-    }
-
-    leftList.innerHTML = html;
-    panel.querySelector("#ep-entry-count").textContent =
-      String(rootData.favorites.length + scannedEntries().length);
+  // 上左：自定义入口
+  function paintFavs() {
+    const favs = rootData.favorites;
+    favEntryList.innerHTML = favs.length
+      ? favs.map((id) => entryRow(id)).join("")
+      : '<div class="ep-empty">给函数按 ⚑ 就会出现在这里</div>';
+    panel.querySelector("#ep-fav-count").textContent = String(favs.length);
   }
 
-  // 右栏文件树
+  // 上右：最近
+  function paintRecent() {
+    const recent = rootData.recent.filter((id) => rootData.favorites.indexOf(id) < 0);
+    recentEntryList.innerHTML = recent.length
+      ? recent.map((id) => entryRow(id)).join("")
+      : '<div class="ep-empty">打开过的入口按时间排在这里</div>';
+    panel.querySelector("#ep-recent-count").textContent = String(recent.length);
+  }
+
+  function paintIdleSyms() {
+    const scanned = scannedEntries();
+    if (!scanned.length) {
+      symHitList.innerHTML = '<div class="ep-empty">扫描器没有找到入口，用上面的搜索挑一个</div>';
+      panel.querySelector("#ep-sym-count").textContent = "0";
+      return;
+    }
+    let html = "";
+    const groups = scanGroups(scanned);
+    if (!openGroups.size) {
+      const first = groups.keys().next();
+      if (!first.done) openGroups.add(first.value);
+    }
+    groups.forEach((rows, name) => {
+      const open = openGroups.has(name);
+      html += '<div class="ep-grp" data-group="' + esc(name) + '"><span>' +
+        (open ? "▾" : "▸") + "</span>" + esc(name) +
+        '<span class="n">' + rows.length + "</span></div>";
+      if (open) html += rows.map((r) => entryRow(r.id)).join("");
+    });
+    symHitList.innerHTML = html;
+    panel.querySelector("#ep-sym-count").textContent = String(scanned.length);
+  }
+
+  // 文件树
   function buildTree(rows) {
     const root = { dirs: new Map(), files: [] };
     rows.forEach((r) => {
@@ -1601,14 +1727,14 @@
     return root;
   }
 
-  function dirRow(node, depth, name, q) {
+  function dirRow(node, depth) {
     const open = openDirs.has(node.path);
     return (
       '<div class="ep-node" data-dir="' + esc(node.path) + '" style="padding-left:' +
         (depth * 14 + 8) + 'px">' +
         '<span class="arw">' + (open ? "▾" : "▸") + "</span>" +
         '<span class="ic">' + (open ? ICON_FOLDER_OPEN : ICON_FOLDER) + "</span>" +
-        '<span class="nm">' + hl(name, q) + "</span>" +
+        '<span class="nm">' + esc(node.path.split("/").pop()) + "</span>" +
         '<span class="tail"><span class="cnt">' + countFiles(node) + "</span></span></div>"
     );
   }
@@ -1617,21 +1743,19 @@
     node.dirs.forEach((d) => { n += countFiles(d); });
     return n;
   }
-
-  function fileRow(row, depth, q) {
+  function fileRow(row, depth) {
     const open = openFiles.has(row.module);
     return (
       '<div class="ep-node file" data-file="' + esc(row.module) + '" style="padding-left:' +
         (depth * 14 + 8) + 'px">' +
         '<span class="arw">' + (open ? "▾" : "▸") + "</span>" +
         '<span class="ic">' + ICON_FILE + "</span>" +
-        '<span class="nm">' + hl(row.path.split("/").pop(), q) + "</span>" +
+        '<span class="nm">' + esc(row.path.split("/").pop()) + "</span>" +
         (row.has_main_guard ? '<span class="ep-dot" title="有 __main__ 块"></span>' : "") +
         '<span class="tail"><span class="cnt">' + row.symbols + "</span></span></div>"
     );
   }
-
-  function symRow(s, depth, q) {
+  function symRow(s, depth) {
     const star = rootData.favorites.indexOf(s.card_id) >= 0;
     const isCls = s.kind === "class";
     return (
@@ -1639,7 +1763,7 @@
         (depth * 14 + 8) + 'px">' +
         '<span class="arw"></span>' +
         '<span class="ic">' + (isCls ? "C" : "\u0192") + "</span>" +
-        '<span class="nm">' + hl(shortName(s.card_id), q) + "</span>" +
+        '<span class="nm">' + esc(shortName(s.card_id)) + "</span>" +
         (s.is_entry ? '<span class="ep-dot" title="扫描器认定的入口"></span>' : "") +
         '<span class="tail">' +
           '<span class="ln">L' + s.def_line + "</span>" +
@@ -1650,41 +1774,109 @@
     );
   }
 
-  function renderTree(q) {
+  function paintTree() {
     const tree = buildTree(fileCache || []);
     const out = [];
     (function walk(node, depth) {
-      node.dirs.forEach((child, name) => {
-        out.push(dirRow(child, depth, name, q));
+      node.dirs.forEach((child) => {
+        out.push(dirRow(child, depth));
         if (openDirs.has(child.path)) walk(child, depth + 1);
       });
       node.files.forEach((f) => {
-        out.push(fileRow(f.row, depth, q));
+        out.push(fileRow(f.row, depth));
         if (openFiles.has(f.row.module)) {
-          (symCache.get(f.row.module) || []).forEach((s) =>
-            out.push(symRow(s, depth + 1, q))
-          );
+          (symCache.get(f.row.module) || []).forEach((s) => out.push(symRow(s, depth + 1)));
         }
       });
     })(tree, 0);
-    rightList.innerHTML = out.join("") || '<div class="ep-empty">这个项目没有 Python 文件</div>';
-    panel.querySelector("#ep-file-count").textContent = String((fileCache || []).length);
+    pathHitList.innerHTML = out.join("") || '<div class="ep-empty">这个项目没有 Python 文件</div>';
+    panel.querySelector("#ep-path-count").textContent = String((fileCache || []).length);
   }
 
-  // 搜索结果：名字命中的文件只列命中的定义，文件命中的才把整个文件铺开
-  function renderHits(groups, q) {
-    if (!groups.length) {
-      rightList.innerHTML = '<div class="ep-empty">没有匹配的文件或函数</div>';
-      return;
-    }
-    const out = [];
-    groups.forEach((g) => {
-      out.push(
-        '<div class="ep-sect" style="padding-top:6px">' + hl(g.path, q) + "</div>"
-      );
-      g.symbols.forEach((s) => out.push(symRow(s, 1, q)));
+  // 被勾选挡掉的命中要说出来，否则会以为项目里没有
+  function suppressedNote(kinds, names) {
+    const items = hits.suppressed
+      .filter(([k, n]) => names.indexOf(k) >= 0 && n > 0)
+      .map(([k, n]) => {
+        const label = (KIND_LABELS.find((x) => x[0] === k) || ["", k])[1];
+        return '<span class="ep-more" data-allow="' + k + '">另有 ' + n + " 个" + label + "命中</span>";
+      });
+    return items.length
+      ? '<div class="ep-filt">' + items.join(" · ") + "，点击放开</div>"
+      : "";
+  }
+
+  // 右栏把命中按文件归组：文件本身命中就当组头，命中的函数挂在下面。
+  // 只按种类分两栏的话，搜函数名右栏一片空白，搜索就白做了。
+  function groupByFile(list) {
+    const order = [];
+    const map = new Map();
+    list.forEach(function (h) {
+      const key = h.module || h.path;
+      let g = map.get(key);
+      if (!g) {
+        g = { key: key, module: h.module, path: h.path, best: h.score, syms: [] };
+        map.set(key, g);
+        order.push(g);
+      }
+      g.best = Math.max(g.best, h.score);
+      if (h.kind === "func" || h.kind === "method" || h.kind === "class") g.syms.push(h);
     });
-    rightList.innerHTML = out.join("");
+    order.forEach((g) => g.syms.sort((a, b) => a.def_line - b.def_line));
+    order.sort((a, b) => b.best - a.best || a.path.localeCompare(b.path));
+    return order;
+  }
+
+  function groupHead(g) {
+    const collapsed = collapsedFiles.has(g.key);
+    const name = g.path.split("/").pop() || g.path;
+    const hitFile = g.best > 0 && g.syms.length === 0;
+    return (
+      '<div class="ep-grp grp-hit' + (collapsed ? " collapsed" : "") + '" data-grp="' + esc(g.key) + '">' +
+        '<span class="arw">' + (collapsed ? "▸" : "▾") + "</span>" +
+        '<span class="ic">' + ICON_FILE + "</span>" +
+        '<span class="nm">' + esc(name) + (hitFile ? '<span class="hitmark">命中</span>' : "") + "</span>" +
+        '<span class="n">' + (g.syms.length || "") + "</span>" +
+        '<span class="tail" data-open="' + esc(g.module) + '" title="在文件树里展开">' +
+          '<span class="ln">' + esc(g.path.split("/").slice(0, -1).join("/") || ".") + "</span></span>" +
+      "</div>"
+    );
+  }
+
+  function paintHits() {
+    const syms = hits.syms;
+    symHitList.innerHTML = syms.length
+      ? syms.map((h) => hitRow(h)).join("") + suppressedNote("sym", ["func", "method", "class"])
+      : '<div class="ep-empty">没有匹配的符号</div>' +
+        suppressedNote("sym", ["func", "method", "class"]);
+
+    const groups = groupByFile(hits.all);
+    if (!groups.length) {
+      pathHitList.innerHTML = '<div class="ep-empty">没有匹配的文件</div>' +
+        suppressedNote("path", ["file", "mod"]);
+    } else {
+      let html = "";
+      groups.forEach(function (g) {
+        html += groupHead(g);
+        if (collapsedFiles.has(g.key)) return;
+        g.syms.forEach(function (s) {
+          html += hitRow(s, 22);
+        });
+      });
+      pathHitList.innerHTML = html + suppressedNote("path", ["file", "mod"]);
+    }
+    panel.querySelector("#ep-sym-count").textContent = String(syms.length);
+    panel.querySelector("#ep-path-count").textContent = String(groups.length);
+  }
+
+  function paint() {
+    paintFavs();
+    paintRecent();
+    if (qInput.value.trim()) paintHits();
+    else {
+      paintIdleSyms();
+      paintTree();
+    }
   }
 
   // 同一时刻只让一个搜索在跑。按键连打时后端要拿索引的锁，排队会让界面
@@ -1692,41 +1884,55 @@
   let searchBusy = false;
   let searchPending = null;
 
-  async function runSearch(q) {
+  async function runSearch() {
+    const q = qInput.value.trim();
+    if (!desktop) return;
+    if (!q) {
+      hits = { all: [], syms: [], suppressed: [] };
+      paint();
+      return;
+    }
     if (searchBusy) {
-      searchPending = q;
+      searchPending = true;
       return;
     }
     searchBusy = true;
     const seq = ++searchSeq;
     try {
-      const groups = await api.invoke("search", { q: q, limit: 200 });
-      if (seq === searchSeq) renderHits(groups, q);
+      const page = await api.invoke("search", {
+        q: q,
+        kinds: enabledKinds(),
+        limit: 200,
+        ctx: activeModule(),
+      });
+      if (seq === searchSeq) {
+        const list = page.hits || [];
+        hits = {
+          all: list,
+          syms: list.filter((h) => h.kind === "func" || h.kind === "method" || h.kind === "class"),
+          suppressed: page.suppressed || [],
+        };
+        paintHits();
+      }
     } catch (err) {
       if (seq === searchSeq) {
-        rightList.innerHTML = '<div class="ep-empty">' + esc(String(err)) + "</div>";
+        symHitList.innerHTML = '<div class="ep-empty">' + esc(String(err)) + "</div>";
+        pathHitList.innerHTML = "";
       }
     } finally {
       searchBusy = false;
       if (searchPending) {
-        const next = searchPending;
         searchPending = null;
-        runSearch(next);
+        runSearch();
       }
     }
   }
 
   let searchTimer = null;
-  qr.addEventListener("input", function () {
+  qInput.addEventListener("input", function () {
     clearTimeout(searchTimer);
-    const v = qr.value;
-    searchTimer = setTimeout(function () {
-      if (!desktop) return;
-      if (v.trim()) runSearch(v.trim());
-      else renderTree("");
-    }, 200);
+    searchTimer = setTimeout(runSearch, 200);
   });
-  ql.addEventListener("input", function () { renderLeft(ql.value); });
 
   async function ensureSymbols(module) {
     if (symCache.has(module)) return symCache.get(module);
@@ -1745,6 +1951,7 @@
     panelOpen = true;
     panel.hidden = false;
     rootBtn.classList.add("open");
+    syncBoxes();
     if (desktop && currentPath) {
       try {
         rootData = await api.invoke("roots", { project: currentPath, action: "get" });
@@ -1763,19 +1970,9 @@
     } else {
       fileCache = [];
     }
-    renderLeft(ql.value);
-    if (!desktop) {
-      rightList.innerHTML = '<div class="ep-empty">预览模式只有入口列表，文件树要在桌面端看</div>';
-    } else {
-      // 第一次打开只展开第一组，其余收着，点哪组才展哪组
-      if (!openGroups.size) {
-        const first = scanGroups(scannedEntries()).keys().next();
-        if (!first.done) openGroups.add(first.value);
-      }
-      renderTree("");
-    }
+    paint();
     updateMarked();
-    qr.focus();
+    qInput.focus();
   }
 
   function closeEntryPanel() {
@@ -1805,12 +2002,31 @@
     } catch (err) {
       return;
     }
-    renderLeft(ql.value);
-    if (qr.value.trim()) runSearch(qr.value.trim());
-    else renderTree("");
+    paint();
     updateMarked();
     window.__clewRootChanged(window.getActiveRoot ? window.getActiveRoot() : null);
     if (window.__clewRefreshCard) window.__clewRefreshCard(id);
+  }
+
+  // 从搜索结果点开文件：清掉查询，在文件树里展开那一行
+  async function revealFile(module) {
+    const row = fileByModule.get(module);
+    qInput.value = "";
+    hits = { all: [], syms: [], suppressed: [] };
+    if (row) {
+      const parts = (row.path || "").split("/");
+      parts.pop();
+      let prefix = "";
+      parts.forEach((p) => {
+        prefix = prefix ? prefix + "/" + p : p;
+        openDirs.add(prefix);
+      });
+      openFiles.add(module);
+      await ensureSymbols(module);
+    }
+    paint();
+    const el = pathHitList.querySelector('[data-file="' + module.replace(/"/g, '\\"') + '"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "center" });
   }
 
   // 卡片头上的旗标按钮走这两个口
@@ -1826,6 +2042,14 @@
   };
 
   panel.addEventListener("click", async function (e) {
+    const more = e.target.closest("[data-allow]");
+    if (more) {
+      kinds[more.dataset.allow] = true;
+      saveKinds();
+      syncBoxes();
+      runSearch();
+      return;
+    }
     const fav = e.target.closest("[data-fav]");
     if (fav) {
       e.stopPropagation();
@@ -1837,22 +2061,25 @@
       await chooseRoot(root.dataset.root);
       return;
     }
+    const open = e.target.closest("[data-open]");
+    if (open) {
+      await revealFile(open.dataset.open);
+      return;
+    }
+    const grp = e.target.closest("[data-grp]");
+    if (grp) {
+      const k = grp.dataset.grp;
+      collapsedFiles.has(k) ? collapsedFiles.delete(k) : collapsedFiles.add(k);
+      paintHits();
+      return;
+    }
     const group = e.target.closest("[data-group]");
     if (group) {
       const g = group.dataset.group;
-      // 手风琴：同一时刻只展开一组。点已展开的就全部收起。
-      // 搜索态里分组是强制展开的，点组头先退出搜索。
-      if (ql.value.trim()) {
-        ql.value = "";
-        openGroups.clear();
-        openGroups.add(g);
-        renderLeft("");
-        return;
-      }
       const wasOpen = openGroups.has(g);
       openGroups.clear();
       if (!wasOpen) openGroups.add(g);
-      renderLeft(ql.value);
+      paintIdleSyms();
       return;
     }
     const file = e.target.closest("[data-file]");
@@ -1864,25 +2091,43 @@
         openFiles.add(module);
         await ensureSymbols(module);
       }
-      renderTree(qr.value.trim());
+      paintTree();
       return;
     }
     const dir = e.target.closest("[data-dir]");
     if (dir) {
       const p = dir.dataset.dir;
       openDirs.has(p) ? openDirs.delete(p) : openDirs.add(p);
-      renderTree(qr.value.trim());
+      paintTree();
     }
   });
 
-  [ql, qr].forEach(function (input) {
-    input.addEventListener("keydown", function (e) {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      const scope = input === ql ? leftList : rightList;
-      const first = scope.querySelector("[data-root]");
-      if (first) chooseRoot(first.dataset.root);
+  qInput.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const first = symHitList.querySelector("[data-root]");
+    if (first) chooseRoot(first.dataset.root);
+  });
+
+  kindBoxes.forEach(function (box) {
+    box.addEventListener("change", function () {
+      kinds[box.dataset.kind] = box.checked;
+      saveKinds();
+      runSearch();
     });
+  });
+
+  // Ctrl+1..5 切换种类，手不用离开键盘
+  document.addEventListener("keydown", function (e) {
+    if (!panelOpen || !(e.ctrlKey || e.metaKey)) return;
+    const n = parseInt(e.key, 10);
+    if (!n || n < 1 || n > KIND_LABELS.length) return;
+    e.preventDefault();
+    const k = KIND_LABELS[n - 1][0];
+    kinds[k] = !kinds[k];
+    saveKinds();
+    syncBoxes();
+    runSearch();
   });
 
   rootBtn.addEventListener("click", function () {
@@ -1935,12 +2180,12 @@
   }
 
   // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
+  // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
   window.__clewPanel = {
     open: openEntryPanel,
     close: closeEntryPanel,
-    left: renderLeft,
-    tree: renderTree,
-    hits: renderHits,
+    paint: paint,
+    search: runSearch,
     setFiles: function (rows) {
       fileCache = rows || [];
       fileByModule = new Map();
@@ -1950,6 +2195,16 @@
     setRoots: function (d) {
       rootData = d || { favorites: [], recent: [] };
     },
+    setHits: function (page) {
+      const list = (page && page.hits) || [];
+      hits = {
+        all: list,
+        syms: list.filter((h) => h.kind === "func" || h.kind === "method" || h.kind === "class"),
+        suppressed: (page && page.suppressed) || [],
+      };
+      paintHits();
+    },
+    inputs: { q: qInput, kinds: kinds },
   };
 
   window.clewShell = {

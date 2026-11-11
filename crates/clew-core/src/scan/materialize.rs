@@ -36,6 +36,8 @@ pub struct Materializer {
     by_method: Option<Arc<BTreeMap<String, Vec<String>>>>,
     by_class: Option<Arc<BTreeMap<String, Vec<String>>>>,
     by_qualname: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    /// 搜索用的扁平行表，与上面的索引同一次读库建好
+    search: Option<Arc<crate::search::Index>>,
 }
 
 impl Materializer {
@@ -62,6 +64,7 @@ impl Materializer {
             by_method: None,
             by_class: None,
             by_qualname: None,
+            search: None,
         })
     }
 
@@ -73,6 +76,11 @@ impl Materializer {
 
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// 搜索用的行表，随全局索引一起建好。
+    pub fn search_index(&self) -> Option<Arc<crate::search::Index>> {
+        self.search.clone()
     }
 
     pub fn root_module_ready(&self, module: &str) -> bool {
@@ -186,6 +194,7 @@ impl Materializer {
         self.by_method = Some(Arc::new(by_method));
         self.by_class = Some(Arc::new(by_class));
         self.by_qualname = Some(Arc::new(by_qualname));
+        self.search = Some(Arc::new(crate::search::build_index(&self.conn, self.project_id)?));
         Ok(())
     }
 

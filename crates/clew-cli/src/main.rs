@@ -73,6 +73,25 @@ enum Command {
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
     },
+    /// Search symbols, files and modules with one ranking
+    Search {
+        /// Project root
+        project: PathBuf,
+        /// Search text
+        q: String,
+        /// kinds to include: func,method,class,file,mod (default all)
+        #[arg(long, value_delimiter = ',')]
+        kinds: Vec<String>,
+        /// How many hits to print
+        #[arg(long, default_value = "30")]
+        limit: usize,
+        /// Module to boost, usually the one being read
+        #[arg(long)]
+        ctx: Option<String>,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
     /// Search definitions; a file-name hit lists that file's definitions
     Find {
         /// Project root
@@ -268,6 +287,73 @@ fn main() -> anyhow::Result<()> {
                 );
             }
             println!("\n{} symbols in {module}", rows.len());
+        }
+        Command::Search {
+            project,
+            q,
+            kinds,
+            limit,
+            ctx,
+            db,
+        } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let t = std::time::Instant::now();
+            let index = clew_core::search::build_index(&conn, project_id)?;
+            let built = t.elapsed();
+            let want: Vec<clew_core::search::Kind> = if kinds.is_empty() {
+                vec![
+                    clew_core::search::Kind::Func,
+                    clew_core::search::Kind::Method,
+                    clew_core::search::Kind::Class,
+                    clew_core::search::Kind::File,
+                    clew_core::search::Kind::Mod,
+                ]
+            } else {
+                kinds
+                    .iter()
+                    .filter_map(|k| clew_core::search::Kind::parse(k))
+                    .collect()
+            };
+            let t = std::time::Instant::now();
+            let page = clew_core::search::run(
+                &index,
+                &clew_core::search::Query {
+                    text: &q,
+                    kinds: want,
+                    ctx_module: ctx.as_deref(),
+                    limit,
+                },
+            );
+            let took = t.elapsed();
+            println!(
+                "{:<6}  {:<7}  {:<8}  {:<44}  {}",
+                "score", "kind", "field", "qualname", "file:line"
+            );
+            for h in &page.hits {
+                let name = if h.qualname.is_empty() {
+                    h.module.clone()
+                } else {
+                    h.qualname.clone()
+                };
+                println!(
+                    "{:<6}  {:<7}  {:<8}  {:<44}  {}:{}",
+                    h.score,
+                    h.kind.as_str(),
+                    h.field,
+                    name,
+                    clew_core::walk::rel_path(&root, &h.path),
+                    h.def_line
+                );
+            }
+            println!(
+                "\n{} hits, suppressed {:?}, index {} rows in {:.1}ms, query {:.1}ms",
+                page.hits.len(),
+                page.suppressed,
+                index.rows.len(),
+                built.as_secs_f64() * 1000.0,
+                took.as_secs_f64() * 1000.0
+            );
         }
         Command::Find { project, q, db } => {
             let root = project.canonicalize()?;
