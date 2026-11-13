@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>侧栏原型 · hermes-agent</title>
+<style>
+  :root{
+    --bg:#14171c; --panel:#1e1f22; --head:#0f1216; --bd:#2b2d30;
+    --tx:#dfe1e5; --dim:#8f939b; --faint:#6f737a;
+    --acc:#58a6ff; --fn:#d2a8ff; --cls:#ffa657; --sel:#e3b341;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
+    font:12.5px/1.5 "Cascadia Mono",Consolas,monospace;overflow:hidden}
+
+  #app{display:flex;height:100%}
+  #rail{width:40px;flex:none;background:var(--panel);border-right:1px solid var(--bd);
+    display:flex;flex-direction:column;align-items:center;padding-top:6px;gap:2px}
+  .rail-btn{width:30px;height:30px;display:grid;place-items:center;border:none;
+    border-radius:4px;background:#2e436e;color:#e8edf7;cursor:pointer;font-size:13px}
+
+  #panel{width:272px;flex:none;background:var(--panel);border-right:1px solid var(--bd);
+    display:flex;flex-direction:column;min-height:0}
+  .phead{display:flex;align-items:center;gap:4px;height:34px;
+    background:var(--head);border-bottom:1px solid var(--bd);flex:none}
+  .view{display:flex;align-items:center;gap:5px;height:26px;background:none;border:none;
+    color:var(--tx);font:inherit;font-size:12.5px;padding:0 8px;border-radius:4px;cursor:pointer}
+  .view:hover,.view.open{background:#2b2d30}
+  .view .caret-t{font-size:9px;color:var(--dim)}
+  .phead .spacer{flex:1}
+  .mini button{background:none;border:none;color:var(--faint);font:inherit;font-size:11px;
+    padding:2px 5px;border-radius:3px;cursor:pointer}
+  .mini button:hover{background:#2b2d30;color:var(--tx)}
+  .mini button.on{color:var(--acc)}
+
+  .tree{flex:1;overflow:auto;scrollbar-width:thin;padding:4px 0;min-height:0}
+  .row{display:flex;align-items:center;gap:5px;height:22px;padding-right:8px;
+    white-space:nowrap;cursor:default;font-size:12px;color:#c9cdd3}
+  .row:hover{background:#2b2d30}
+  .row.sel{background:#2e436e;color:#e8edf7}
+  .row .car{width:11px;flex:none;text-align:center;color:#8f939b;font-size:9px;cursor:pointer}
+  .row .ic{width:12px;flex:none;text-align:center;font-size:10px;color:#8f939b}
+  .row .nm{overflow:hidden;text-overflow:ellipsis}
+  .row .nm.fn{color:var(--fn)}
+  .row .nm.cls{color:var(--cls)}
+  .row .tail{margin-left:auto;display:flex;align-items:center;gap:6px;
+    color:var(--faint);font-size:10.5px;flex:none}
+  .row .flag{color:#6f737a;opacity:0;font-size:10px;cursor:pointer}
+  .row:hover .flag{opacity:1}
+  .row .flag.on{opacity:1;color:var(--sel)}
+  .row .dot{width:5px;height:5px;border-radius:50%;background:var(--acc);flex:none}
+  .row .ln{color:#4b5563;font-size:10px}
+  .row.note{height:15px;padding-bottom:5px;font-size:10.5px;color:var(--faint)}
+  .row.note .note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .empty{color:var(--faint);padding:10px 12px;font-size:11.5px;line-height:1.7}
+  .pfoot{flex:none;display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;
+    border-top:1px solid var(--bd);color:var(--faint);font-size:10.5px;background:var(--head)}
+
+  #canvas{flex:1;min-width:0;display:grid;place-items:center;color:#3a4149;font-size:12px}
+
+  #menu{position:fixed;z-index:20;min-width:150px;background:#161b22;border:1px solid var(--bd);
+    border-radius:6px;padding:4px;box-shadow:0 10px 28px #0009}
+  #menu[hidden]{display:none}
+  #menu button{display:block;width:100%;text-align:left;background:none;border:none;
+    color:var(--tx);font:inherit;font-size:12.5px;padding:6px 10px;border-radius:4px;cursor:pointer}
+  #menu button:hover{background:#22303f}
+</style>
+</head>
+<body>
+<div id="app">
+  <nav id="rail"><button class="rail-btn" title="符号树">▤</button></nav>
+
+  <aside id="panel">
+    <div class="phead">
+      <button class="view" id="viewBtn"><span id="viewName">全部函数</span><span class="caret-t">▾</span></button>
+      <div class="spacer"></div>
+      <div class="mini">
+        <button id="tgNested" class="on" title="单子目录链合并成一行">合并链</button>
+        <button id="tgFlat" class="on" title="入口视图：文件与入口同一层">入口展平</button>
+        <button id="tgFold" title="全部展开 / 全部折叠">全展</button>
+      </div>
+    </div>
+    <div class="tree" id="tree"></div>
+    <div class="pfoot"><span id="stat"></span></div>
+  </aside>
+
+  <main id="canvas">画布占位（原型只看侧栏）</main>
+</div>
+
+<div id="menu" hidden></div>
+
+<script src="tree-data.js"></script>
+<script>
+// 数据是 hermes-agent 的真实索引导出（clew tree --json），没有一份是编的。
+// files: [{p: 相对路径, s: [[qualname, kind, def_line, is_entry], ...]}]
+const FILES = (window.TREE_DATA && window.TREE_DATA.files) || [];
+const PROJECT = (window.TREE_DATA && window.TREE_DATA.project) || "project";
+
+const VIEW_NAME = { all: "全部函数", entry: "入口函数", fav: "收藏夹" };
+const S = {
+  view: "all",
+  nested: true,   // 单子目录链合并
+  flat: true,     // 入口视图：文件与入口同层
+  favs: new Set(),
+  open: {}
+};
+["all", "entry", "fav"].forEach(function (v) {
+  S.open[v] = { dirs: new Set(), files: new Set(), syms: new Set() };
+});
+function st() { return S.open[S.view]; }
+
+// 文件对象索引，收藏夹要按 id 找回文件和定义
+const BY_PATH = new Map();
+FILES.forEach(function (f) { BY_PATH.set(f.p, f); });
+
+// ── 建树 ────────────────────────────────────────────────────────────
+function buildTree(files) {
+  const root = { name: "", path: "", dirs: new Map(), files: [] };
+  files.forEach(function (f) {
+    const parts = f.p.split("/");
+    let n = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const key = parts[i];
+      if (!n.dirs.has(key)) {
+        n.dirs.set(key, {
+          name: key,
+          path: (n.path ? n.path + "/" : "") + key,
+          dirs: new Map(),
+          files: []
+        });
+      }
+      n = n.dirs.get(key);
+    }
+    n.files.push(f);
+  });
+  return root;
+}
+
+/**
+ * 压缩单子目录链：目录里没有文件、只有唯一一个子目录时，两行并成一行。
+ * 例：svc/internal/engine 三层只有 engine 里有文件 → 显示 svc.internal.engine
+ */
+function squeeze(node, name) {
+  let n = node;
+  let label = name;
+  let joined = false;
+  if (S.nested) {
+    while (n.files.length === 0 && n.dirs.size === 1) {
+      const pair = Array.from(n.dirs.entries())[0];
+      label += "." + pair[0];
+      n = pair[1];
+      joined = true;
+    }
+  }
+  return { node: n, label: label, joined: joined };
+}
+
+function sortBy(arr, key) {
+  return arr.slice().sort(function (a, b) {
+    const x = (key(a) || "").toLowerCase(), y = (key(b) || "").toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+}
+
+function nestSyms(syms) {
+  const byQ = Object.create(null);
+  syms.forEach(function (s) { byQ[s[0]] = { s: s, kids: [] }; });
+  const tops = [];
+  syms.forEach(function (s) {
+    const node = byQ[s[0]];
+    const dot = s[0].lastIndexOf(".");
+    const parent = dot > 0 ? byQ[s[0].slice(0, dot)] : null;
+    if (parent && parent !== node) parent.kids.push(node); else tops.push(node);
+  });
+  return { tops: tops, byQ: byQ };
+}
+
+function symId(file, qual) { return file.p + ":" + qual; }
+
+function emitSyms(rows, syms, depth, file) {
+  const nested = nestSyms(syms);
+  (function emit(node, d) {
+    const s = node.s;
+    const id = symId(file, s[0]);
+    const open = st().syms.has(id);
+    rows.push({
+      type: "sym", depth: d, id: id, file: file, qual: s[0], kind: s[1],
+      line: s[2], entry: !!s[3], kids: node.kids.length, open: open,
+      label: s[0] === "<module>" ? baseName(file.p) : s[0].split(".").pop()
+    });
+    if (open) node.kids.forEach(function (k) { emit(k, d + 1); });
+  });
+  nested.tops.forEach(function (n) { emit(n, depth); });
+}
+
+function baseName(path) {
+  return path.split("/").pop().replace(/\.py$/, "");
+}
+
+// 全部函数：目录 → 文件 → 定义
+function rowsAll(root) {
+  const rows = [];
+  (function walk(node, depth) {
+    sortBy(Array.from(node.dirs.keys()), function (k) { return k; }).forEach(function (name) {
+      const sq = squeeze(node.dirs.get(name), name);
+      const key = sq.node.path;
+      const open = st().dirs.has(key);
+      rows.push({ type: "dir", depth: depth, label: sq.label, key: key, open: open, joined: sq.joined });
+      if (!open) return;
+      walk(sq.node, depth + 1);
+      sortBy(sq.node.files, function (f) { return f.p; }).forEach(function (f) {
+        const fopen = st().files.has(f.p);
+        rows.push({ type: "file", depth: depth + 1, file: f, open: fopen });
+        if (fopen) emitSyms(rows, f.s, depth + 2, f);
+      });
+    });
+    if (depth === 0) {
+      sortBy(node.files, function (f) { return f.p; }).forEach(function (f) {
+        const fopen = st().files.has(f.p);
+        rows.push({ type: "file", depth: 0, file: f, open: fopen });
+        if (fopen) emitSyms(rows, f.s, 1, f);
+      });
+    }
+  })(root, 0);
+  return rows;
+}
+
+// 入口函数：只保留含入口的路径；可选把文件与入口压到同一层
+function rowsEntry(root) {
+  const rows = [];
+  const hasEntry = function (f) { return f.s.some(function (s) { return s[3]; }); };
+  const subtreeHas = function (n) {
+    if (n.files.some(hasEntry)) return true;
+    let found = false;
+    n.dirs.forEach(function (c) { if (!found && subtreeHas(c)) found = true; });
+    return found;
+  };
+  const pushFile = function (f, depth) {
+    const syms = f.s.filter(function (s) { return s[3]; });
+    if (!S.flat) {
+      // 对照：文件一层，入口再一层
+      rows.push({ type: "file", depth: depth, file: f, open: true, entryOnly: true });
+      syms.forEach(function (s) {
+        rows.push({ type: "entry", depth: depth + 1, file: f, qual: s[0], line: s[2], id: symId(f, s[0]) });
+      });
+      return;
+    }
+    // 文件与入口同一层：一行一个入口；文件名只在入口名与文件不同时出现
+    syms.forEach(function (s) {
+      rows.push({
+        type: "entry", depth: depth, file: f, qual: s[0], line: s[2],
+        id: symId(f, s[0])
+      });
+      rows.push({ type: "note", depth: depth, file: f, id: symId(f, s[0]) });
+    });
+  };
+
+  (function walk(node, depth) {
+    sortBy(Array.from(node.dirs.keys()), function (k) { return k; }).forEach(function (name) {
+      const sq = squeeze(node.dirs.get(name), name);
+      if (!subtreeHas(sq.node)) return;
+      const key = sq.node.path;
+      const open = st().dirs.has(key);
+      rows.push({ type: "dir", depth: depth, label: sq.label, key: key, open: open, joined: sq.joined });
+      if (!open) return;
+      sortBy(sq.node.files.filter(hasEntry), function (f) { return f.p; })
+        .forEach(function (f) { pushFile(f, depth + 1); });
+      walk(sq.node, depth + 1);
+    });
+    if (depth === 0) {
+      sortBy(node.files.filter(hasEntry), function (f) { return f.p; })
+        .forEach(function (f) { pushFile(f, 0); });
+    }
+  })(root, 0);
+  return rows;
+}
+
+// 收藏夹：平铺，按收藏顺序
+function rowsFav() {
+  return Array.from(S.favs).map(function (id) {
+    const i = id.indexOf(":");
+    const path = i < 0 ? id : id.slice(0, i);
+    const qual = i < 0 ? "" : id.slice(i + 1);
+    const f = BY_PATH.get(path) || { p: path, s: [] };
+    return {
+      type: "entry", depth: 0, file: f, qual: qual, id: id, showFile: true,
+      module: path.replace(/\.py$/, "").split("/").join(".")
+    };
+  });
+}
+
+function collect(root) {
+  if (S.view === "all") return rowsAll(root);
+  if (S.view === "entry") return rowsEntry(root);
+  return rowsFav();
+}
+
+// ── 渲染 ────────────────────────────────────────────────────────────
+const treeEl = document.getElementById("tree");
+const PAGE = 200;         // 每帧补多少行：文件和函数加起来可能几万条
+let rows = [];
+let drawn = 0;
+let selected = null;
+let tree = null;
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function entryName(r) {
+  if (r.qual === "<module>") return baseName(r.file.p);
+  return r.qual.split(".").pop();
+}
+
+function rowHtml(r, i) {
+  const pad = 6 + r.depth * 12;
+  const on = r.id && r.id === selected ? " sel" : "";
+  let html = '<div class="row ' + r.type + on + '" style="padding-left:' + pad + 'px" data-i="' + i + '">';
+  const caret = (r.type === "dir" || r.type === "file" || (r.type === "sym" && r.kids))
+    ? '<span class="car">' + (r.open ? "v" : ">") + "</span>"
+    : '<span class="car"></span>';
+
+  if (r.type === "dir") {
+    html += caret + '<span class="nm">' + esc(r.label) + "</span>";
+  } else if (r.type === "file") {
+    html += caret + '<span class="nm">' + esc(r.file.p.split("/").pop()) + "</span>";
+  } else if (r.type === "entry") {
+    html += caret + '<span class="ic">ƒ</span>' +
+      '<span class="nm fn">' + esc(entryName(r)) + "</span>" +
+      '<span class="tail"><span class="flag ' + (S.favs.has(r.id) ? "on" : "") +
+      '" data-fav="' + esc(r.id) + '">⚑</span></span>';
+  } else if (r.type === "note") {
+    html = '<div class="row note" style="padding-left:' + (pad + 31) + 'px" data-i="' + i + '">' +
+      '<span class="note">' + esc(r.file.p.split("/").pop()) + "</span></div>";
+  } else {
+    const cls = r.kind === "class" ? "cls" : r.kind === "method" ? "" : "fn";
+    html += caret + '<span class="ic">' + (r.kind === "class" ? "C" : r.kind === "method" ? "M" : "ƒ") + "</span>" +
+      '<span class="nm ' + cls + '">' + esc(r.label) + "</span>" +
+      '<span class="tail">' +
+        (r.entry ? '<span class="dot" title="自动识别的入口"></span>' : "") +
+        '<span class="flag ' + (S.favs.has(r.id) ? "on" : "") + '" data-fav="' + esc(r.id) + '">⚑</span>' +
+        '<span class="ln">L' + r.line + "</span>" +
+      "</span>";
+  }
+  return html + "</div>";
+}
+
+function drawMore() {
+  if (drawn >= rows.length) return;
+  const end = Math.min(drawn + PAGE, rows.length);
+  let html = "";
+  for (; drawn < end; drawn++) html += rowHtml(rows[drawn], drawn);
+  treeEl.insertAdjacentHTML("beforeend", html);
+}
+
+function primeEntryDirs(root) {
+  if (S.entryInit) return;
+  S.entryInit = true;
+  const mine = S.open.entry.dirs;
+  (function walk(n) {
+    n.dirs.forEach(function (c, name) {
+      mine.add(squeeze(c, name).node.path);
+      walk(c);
+    });
+  })(root);
+}
+
+function render() {
+  tree = buildTree(FILES);
+  if (S.view === "entry") primeEntryDirs(tree);
+  rows = collect(tree);
+  drawn = 0;
+  treeEl.innerHTML = "";
+  if (!rows.length) {
+    treeEl.innerHTML = '<div class="empty">' +
+      (S.view === "fav" ? "给定义按 ⚑ 就会出现在这里"
+       : S.view === "entry" ? "扫描器没有找到入口" : "没有定义") + "</div>";
+    drawn = 0;
+  } else {
+    drawMore();
+  }
+  const entries = rows.filter(function (r) { return r.type === "entry" || (r.type === "sym" && r.entry); }).length;
+  document.getElementById("stat").textContent =
+    "行 " + rows.length + (S.view === "entry" ? " · 入口 " + entries : "");
+  document.getElementById("viewName").textContent = VIEW_NAME[S.view];
+}
+
+treeEl.addEventListener("scroll", function () {
+  if (treeEl.scrollTop + treeEl.clientHeight >= treeEl.scrollHeight - 400) drawMore();
+});
+
+// ── 交互 ────────────────────────────────────────────────────────────
+treeEl.addEventListener("click", function (e) {
+  const flag = e.target.closest("[data-fav]");
+  if (flag) {
+    e.stopPropagation();
+    const id = flag.dataset.fav;
+    if (S.favs.has(id)) S.favs.delete(id); else S.favs.add(id);
+    render();
+    return;
+  }
+  const el = e.target.closest(".row");
+  if (!el) return;
+  const r = rows[Number(el.dataset.i)];
+  if (!r) return;
+  if (r.type === "dir") {
+    const s = st().dirs;
+    if (s.has(r.key)) s.delete(r.key); else s.add(r.key);
+    render();
+    return;
+  }
+  if (r.type === "file") {
+    const s = st().files;
+    if (s.has(r.file.p)) s.delete(r.file.p); else s.add(r.file.p);
+    render();
+    return;
+  }
+  if (r.type === "sym" && r.kids && e.target.closest(".car")) {
+    const s = st().syms;
+    if (s.has(r.id)) s.delete(r.id); else s.add(r.id);
+    render();
+    return;
+  }
+  selected = r.id || null;
+  render();
+});
+
+// 视图下拉
+const menu = document.getElementById("menu");
+const viewBtn = document.getElementById("viewBtn");
+viewBtn.addEventListener("click", function (e) {
+  e.stopPropagation();
+  if (!menu.hidden) { menu.hidden = true; viewBtn.classList.remove("open"); return; }
+  menu.innerHTML = ["all", "entry", "fav"].map(function (v) {
+    return '<button data-v="' + v + '">' + (v === S.view ? "✓ " : "\u2003") + VIEW_NAME[v] + "</button>";
+  }).join("");
+  const r = viewBtn.getBoundingClientRect();
+  menu.style.left = r.left + "px";
+  menu.style.top = r.bottom + 4 + "px";
+  menu.hidden = false;
+  viewBtn.classList.add("open");
+});
+menu.addEventListener("click", function (e) {
+  const b = e.target.closest("[data-v]");
+  if (!b) return;
+  S.view = b.dataset.v;
+  menu.hidden = true;
+  viewBtn.classList.remove("open");
+  render();
+});
+document.addEventListener("click", function (e) {
+  if (!menu.hidden && !menu.contains(e.target)) { menu.hidden = true; viewBtn.classList.remove("open"); }
+});
+
+const tgNested = document.getElementById("tgNested");
+const tgFlat = document.getElementById("tgFlat");
+tgNested.addEventListener("click", function () {
+  S.nested = !S.nested;
+  tgNested.classList.toggle("on", S.nested);
+  render();
+});
+tgFlat.addEventListener("click", function () {
+  S.flat = !S.flat;
+  tgFlat.classList.toggle("on", S.flat);
+  render();
+});
+document.getElementById("tgFold").addEventListener("click", function () {
+  const mine = st();
+  const anyOpen = mine.dirs.size > 0 || mine.files.size > 0 || mine.syms.size > 0;
+  mine.dirs.clear(); mine.files.clear(); mine.syms.clear();
+  if (anyOpen) { render(); return; }
+  (function walk(n) {
+    n.dirs.forEach(function (c, name) {
+      mine.dirs.add(squeeze(c, name).node.path);
+      walk(c);
+    });
+  })(tree);
+  FILES.forEach(function (f) {
+    mine.files.add(f.p);
+    nestSyms(f.s).tops.forEach(function (node) {
+      (function deep(x) {
+        if (x.kids.length) mine.syms.add(symId(f, x.s[0]));
+        x.kids.forEach(deep);
+      })(node);
+    });
+  });
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

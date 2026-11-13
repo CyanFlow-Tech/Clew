@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "tech.cyanflow.clew",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../src",
+    "devUrl": "http://127.0.0.1:1755"
   },
   "app": {
     "withGlobalTauri": true,

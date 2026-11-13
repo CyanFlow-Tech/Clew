@@ -1,7 +1,8 @@
-//! 一套搜索。符号、文件、模块走同一份打分，前端只负责按 kind 分队渲染。
+//! 搜索只有两级：前缀与函数名。
 //!
-//! 三层命中（全词相等、前缀、子序列）各自给基础分，再乘字段权重。命中位置
-//! 一并返回，前端不再自己匹配一遍，两栏、CLI、将来的模型检索看到的是同一份判断。
+//! 输入用冒号分隔，左边是模块前缀（字面匹配，不做模糊），右边是函数名（全词、
+//! 前缀、词界、子序列四级）。没有冒号时整串同时试两边，函数名命中优先。结果
+//! 一律是定义，格式固定为 `模块:qualname`，文件与模块本身不出现在结果里。
 
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -49,7 +50,6 @@ pub struct ModuleRef {
     pub module: String,
     pub path: String,
     module_l: String,
-    path_l: String,
     /// 出现过的字符集合，给查询做快速排除
     mask: u64,
 }
@@ -113,6 +113,8 @@ pub struct Hit {
     pub qualname: String,
     pub def_line: u32,
     pub card_id: String,
+    /// 扫描器认定的入口。左栏只收这一类，外加用户自己标记的。
+    pub is_entry: bool,
     /// 命中的字段，前端据此决定在哪一段上色
     pub field: &'static str,
     /// 命中字符在展示文本里的字节区间，成对出现
@@ -120,24 +122,66 @@ pub struct Hit {
     pub score: u32,
 }
 
+#[derive(serde::Serialize)]
 pub struct Page {
     pub hits: Vec<Hit>,
-    /// 被种类过滤挡下的命中数，按 kind 记。界面用它提示「另有 N 个方法命中」
-    pub suppressed: Vec<(&'static str, usize)>,
 }
 
-/// 查询。ctx_module 是当前打开的模块，命中它加一点分。
-pub struct Query<'a> {
-    pub text: &'a str,
-    pub kinds: Vec<Kind>,
-    pub ctx_module: Option<&'a str>,
-    pub limit: usize,
+/// 结果范围。自动识别只收扫描器认的入口与用户标记的，全部函数不限。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Entry,
+    All,
+}
+
+impl Scope {
+    pub fn parse(s: &str) -> Scope {
+        if s == "all" {
+            Scope::All
+        } else {
+            Scope::Entry
+        }
+    }
+}
+
+/// 两级查询。左边是模块，右边是函数名。
+///
+/// 只写左边就是模块查询，列出这些模块下的定义。写了冒号再加右边，才在名字上收窄。
+pub struct Query {
+    pub prefix: String,
+    pub name: String,
+    pub scope: Scope,
+    pub ctx_module: Option<String>,
+}
+
+impl Query {
+    pub fn parse(text: &str, scope: Scope, ctx_module: Option<String>) -> Query {
+        let lower = text.trim().to_lowercase();
+        match lower.find(':') {
+            Some(at) => Query {
+                prefix: lower[..at].trim().to_string(),
+                name: lower[at + 1..].trim().to_string(),
+                scope,
+                ctx_module,
+            },
+            // 没有冒号就只查模块，末尾补一个冒号与不补完全等价
+            None => Query {
+                prefix: lower.trim_end_matches(':').trim().to_string(),
+                name: String::new(),
+                scope,
+                ctx_module,
+            },
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.prefix.is_empty() && self.name.is_empty()
+    }
 }
 
 struct Match {
     tier: u32,
     spans: Vec<(u32, u32)>,
-    gaps: u32,
 }
 
 fn is_boundary(s: &str, at: usize) -> bool {
@@ -172,7 +216,6 @@ fn match_field(hay: &str, needle: &str) -> Option<Match> {
         return Some(Match {
             tier,
             spans: vec![(pos as u32, end)],
-            gaps: 0,
         });
     }
     // 单个字符的子序列等于「包含任意一个该字符」，太吵，不做
@@ -182,8 +225,6 @@ fn match_field(hay: &str, needle: &str) -> Option<Match> {
     let mut want = needle.chars();
     let mut current = want.next()?;
     let mut first: Option<usize> = None;
-    let mut prev_end = 0usize;
-    let mut gaps = 0u32;
     let mut marks: Vec<(u32, u32)> = Vec::with_capacity(needle.len());
     for (i, ch) in hay.char_indices() {
         if ch != current {
@@ -191,11 +232,8 @@ fn match_field(hay: &str, needle: &str) -> Option<Match> {
         }
         if first.is_none() {
             first = Some(i);
-        } else {
-            gaps += (i - prev_end) as u32;
         }
-        prev_end = i + ch.len_utf8();
-        marks.push((i as u32, prev_end as u32));
+        marks.push((i as u32, (i + ch.len_utf8()) as u32));
         match want.next() {
             Some(next) => current = next,
             None => {
@@ -204,41 +242,11 @@ fn match_field(hay: &str, needle: &str) -> Option<Match> {
                 return Some(Match {
                     tier,
                     spans: marks,
-                    gaps,
                 });
             }
         }
     }
     None
-}
-
-/// 字段权重，按百分比算，避免浮点。
-fn weight(field: &str) -> u32 {
-    match field {
-        "name" => 100,
-        "qualname" => 80,
-        "module" => 60,
-        "path" => 50,
-        _ => 50,
-    }
-}
-
-fn best_of(fields: &[(&'static str, &str)], needle: &str) -> Option<(&'static str, Match)> {
-    let mut best: Option<(&'static str, Match)> = None;
-    let mut best_score = 0u32;
-    for (name, hay) in fields {
-        if hay.is_empty() {
-            continue;
-        }
-        if let Some(m) = match_field(hay, needle) {
-            let score = m.tier * weight(name) / 100;
-            if score > best_score {
-                best_score = score;
-                best = Some((name, m));
-            }
-        }
-    }
-    best
 }
 
 /// 从库里读出全部可搜的行。符号按 kind 分，另外补上文件与模块两行。
@@ -256,11 +264,9 @@ pub fn build_index(conn: &Connection, project_id: i64) -> rusqlite::Result<Index
             let (module, path) = row?;
             by_name.insert(module.clone(), modules.len() as u32);
             let module_l = module.to_lowercase();
-            let path_l = path.to_lowercase();
-            let mask = mask_of(&module_l) | mask_of(&path_l);
+            let mask = mask_of(&module_l);
             modules.push(ModuleRef {
                 module_l,
-                path_l,
                 mask,
                 module,
                 path,
@@ -269,43 +275,10 @@ pub fn build_index(conn: &Connection, project_id: i64) -> rusqlite::Result<Index
     }
 
     let mut rows: Vec<Row> = Vec::new();
-    // 文件与模块各一行，名字用文件名或模块最后一段
-    for (idx, m) in modules.iter().enumerate() {
-        let file_name = m
-            .path
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(&m.path)
-            .to_string();
-        rows.push(Row {
-            kind: Kind::File,
-            module: idx as u32,
-            qualname: String::new(),
-            def_line: 0,
-            card_id: String::new(),
-            is_entry: false,
-            name_l: file_name.to_lowercase(),
-            qual_l: String::new(),
-            mask: mask_of(&file_name.to_lowercase()),
-        });
-        let last = m.module.rsplit('.').next().unwrap_or(&m.module).to_string();
-        rows.push(Row {
-            kind: Kind::Mod,
-            module: idx as u32,
-            qualname: String::new(),
-            def_line: 0,
-            card_id: String::new(),
-            is_entry: false,
-            name_l: last.to_lowercase(),
-            qual_l: String::new(),
-            mask: mask_of(&last.to_lowercase()),
-        });
-    }
-
     {
         let mut stmt = conn.prepare(
             "SELECT module, qualname, kind, def_line, is_entry
-               FROM symbol WHERE project_id = ?1 AND kind <> 'module'",
+               FROM symbol WHERE project_id = ?1",
         )?;
         let found = stmt.query_map(params![project_id], |r| {
             Ok((
@@ -325,9 +298,15 @@ pub fn build_index(conn: &Connection, project_id: i64) -> rusqlite::Result<Index
                 "function" => Kind::Func,
                 "method" => Kind::Method,
                 "class" => Kind::Class,
+                // 模块入口是 <module> 卡片，只在自动识别里出现，不参与文字搜索
+                "module" => Kind::Mod,
                 _ => continue,
             };
-            let name = qualname.rsplit('.').next().unwrap_or(&qualname).to_string();
+            let name = if qualname == "<module>" {
+                module.rsplit('.').next().unwrap_or(&module).to_string()
+            } else {
+                qualname.rsplit('.').next().unwrap_or(&qualname).to_string()
+            };
             let name_l = name.to_lowercase();
             let qual_l = qualname.to_lowercase();
             let mask = mask_of(&name_l) | mask_of(&qual_l);
@@ -348,49 +327,155 @@ pub fn build_index(conn: &Connection, project_id: i64) -> rusqlite::Result<Index
     Ok(Index { modules, rows })
 }
 
-/// 跑一次查询。命中全部分种类算完再按 kinds 分流，被挡下的数量才报得出来。
-pub fn run(index: &Index, query: &Query) -> Page {
-    let needle = query.text.trim().to_lowercase();
-    let mut hits: Vec<Hit> = Vec::new();
-    let mut suppressed: std::collections::BTreeMap<&'static str, usize> =
-        std::collections::BTreeMap::new();
-    if needle.len() < 2 && needle.is_empty() {
-        return Page {
-            hits,
-            suppressed: Vec::new(),
-        };
+/// 一行符号在名字这一侧的最好命中。qualname 也算，`Runner.main` 这种能直接搜。
+fn match_symbol(row: &Row, needle: &str) -> Option<(u32, &'static str, Vec<(u32, u32)>)> {
+    let by_name = match_field(&row.name_l, needle);
+    let by_qual = match_field(&row.qual_l, needle);
+    match (by_name, by_qual) {
+        (Some(a), Some(b)) => {
+            // 整串更长，同级别时让末段命中排前面
+            let sa = a.tier;
+            let sb = b.tier * 90 / 100;
+            if sa >= sb {
+                Some((sa, "name", a.spans))
+            } else {
+                Some((sb, "qualname", b.spans))
+            }
+        }
+        (Some(a), None) => Some((a.tier, "name", a.spans)),
+        (None, Some(b)) => Some((b.tier * 90 / 100, "qualname", b.spans)),
+        (None, None) => None,
+    }
+}
+
+/// 模块侧的命中阶梯。先按点分段找子串，找不到再退到子序列，
+/// 这样 `cli` 能命中 `hermes_cli`，`hercli` 也能命中 `hermes_cli`。
+///
+/// 900 段全等，800 段开头，700 段内包含，600 段首起的子序列，
+/// 500 跨段包含，400 别处的子序列。层级越具体越靠前。
+fn at_segment_start(text: &str, at: usize) -> bool {
+    at == 0 || text.as_bytes()[at - 1] == b'.'
+}
+
+fn module_match(module_l: &str, needle: &str) -> Option<(u32, Vec<(u32, u32)>)> {
+    if needle.is_empty() {
+        return None;
     }
 
-    let wanted = needle_mask(&needle);
+    let mut best: Option<(u32, Vec<(u32, u32)>)> = None;
+    let mut offset = 0usize;
+    for seg in module_l.split('.') {
+        let start = offset;
+        offset += seg.len() + 1;
+        if let Some(pos) = seg.find(needle) {
+            let tier = if pos == 0 && seg.len() == needle.len() {
+                900
+            } else if pos == 0 {
+                800
+            } else {
+                700
+            };
+            let at = (start + pos) as u32;
+            let candidate = (tier, vec![(at, at + needle.len() as u32)]);
+            let better = match best {
+                Some((t, _)) => tier > t,
+                None => true,
+            };
+            if better {
+                best = Some(candidate);
+            }
+        }
+    }
+    if best.is_some() {
+        return best;
+    }
+
+    // 跨段的字面命中，比如 `cli.cur` 之于 `cli.curator`
+    if let Some(pos) = module_l.find(needle) {
+        let at = pos as u32;
+        return Some((500, vec![(at, at + needle.len() as u32)]));
+    }
+
+    // 子序列。单个字符不做，等于「含这个字母」，太吵
+    if needle.chars().count() < 2 {
+        return None;
+    }
+    let mut want = needle.chars();
+    let mut current = want.next()?;
+    let mut spans: Vec<(u32, u32)> = Vec::new();
+    let mut first: Option<usize> = None;
+    for (i, ch) in module_l.char_indices() {
+        if ch != current {
+            continue;
+        }
+        if first.is_none() {
+            first = Some(i);
+        }
+        spans.push((i as u32, (i + ch.len_utf8()) as u32));
+        match want.next() {
+            Some(next) => current = next,
+            None => {
+                let start = first.unwrap_or(0);
+                let tier = if at_segment_start(module_l, start) { 600 } else { 400 };
+                return Some((tier, spans));
+            }
+        }
+    }
+    None
+}
+
+/// 跑一次查询。左边是模块，右边是函数名。
+///
+/// 只写左边就列出这些模块下的定义，按模块命中的三级排序。写了右边就用函数名
+/// 定强弱，模块命中只作为门槛与少量加分。范围（自动识别 / 全部函数）只管空查询。
+pub fn run(index: &Index, query: &Query) -> Page {
+    if query.is_empty() || (query.prefix.is_empty() && query.name.is_empty()) {
+        return browse(index, query.scope);
+    }
+    let mut hits: Vec<Hit> = Vec::new();
+    let mask = {
+        let joined = format!("{}{}", query.prefix, query.name);
+        needle_mask(&joined)
+    };
+
     for row in &index.rows {
+        if !row.kind.is_symbol() {
+            continue;
+        }
         let module = &index.modules[row.module as usize];
-        if let Some(mask) = wanted {
-            if (row.mask | module.mask) & mask != mask {
+        if let Some(m) = mask {
+            if (row.mask | module.mask) & m != m {
                 continue;
             }
         }
-        let fields: [(&'static str, &str); 4] = [
-            ("name", &row.name_l),
-            ("qualname", &row.qual_l),
-            ("module", &module.module_l),
-            ("path", &module.path_l),
-        ];
-        let Some((field, m)) = best_of(&fields, &needle) else {
-            continue;
+
+        let mod_hit = if query.prefix.is_empty() {
+            None
+        } else {
+            match module_match(&module.module_l, &query.prefix) {
+                Some(found) => Some(found),
+                None => continue,
+            }
         };
-        if !query.kinds.contains(&row.kind) {
-            *suppressed.entry(row.kind.as_str()).or_insert(0) += 1;
-            continue;
-        }
-        let mut score = m.tier * weight(field) / 100;
+
+        let (mut score, field, spans) = if query.name.is_empty() {
+            let (tier, spans) = mod_hit.clone().expect("空函数名时模块命中必然存在");
+            (tier, "module", spans)
+        } else {
+            match match_symbol(row, &query.name) {
+                Some((tier, field, spans)) => {
+                    let bonus = mod_hit.map(|(t, _)| t / 4).unwrap_or(0);
+                    (tier + bonus, field, spans)
+                }
+                None => continue,
+            }
+        };
         if row.is_entry {
             score += 50;
         }
-        if query.ctx_module == Some(module.module.as_str()) {
+        if query.ctx_module.as_deref() == Some(module.module.as_str()) {
             score += 30;
         }
-        let penalty = m.gaps.min(100);
-        score = score.saturating_sub(penalty);
         hits.push(Hit {
             kind: row.kind,
             module: module.module.clone(),
@@ -398,36 +483,59 @@ pub fn run(index: &Index, query: &Query) -> Page {
             qualname: row.qualname.clone(),
             def_line: row.def_line,
             card_id: row.card_id.clone(),
+            is_entry: row.is_entry,
             field,
-            spans: m.spans,
+            spans,
             score,
         });
     }
 
+    // 同分时先按模块名，再按定义名字典序，这条规则固定
     hits.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
-            .then_with(|| a.qualname.len().cmp(&b.qualname.len()))
-            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.module.to_lowercase().cmp(&b.module.to_lowercase()))
+            .then_with(|| a.qualname.to_lowercase().cmp(&b.qualname.to_lowercase()))
             .then_with(|| a.def_line.cmp(&b.def_line))
     });
+    Page { hits }
+}
 
-    // 同一个模块既有文件行又有模块行时只留文件行。两者是同一样东西的两种看法，
-    // 并排出现就是两行一模一样的条目。
-    if query.kinds.contains(&Kind::File) {
-        let files: std::collections::HashSet<String> = hits
-            .iter()
-            .filter(|h| h.kind == Kind::File)
-            .map(|h| h.module.clone())
-            .collect();
-        hits.retain(|h| !(h.kind == Kind::Mod && files.contains(&h.module)));
+/// 空查询时的列表。范围决定收不收非入口的定义，排序一律模块名在前。
+pub fn browse(index: &Index, scope: Scope) -> Page {
+    let mut hits: Vec<Hit> = Vec::new();
+    for row in &index.rows {
+        let want = match scope {
+            // 自动识别：扫描器认的入口，函数与模块入口都收
+            Scope::Entry => row.is_entry && (row.kind.is_symbol() || row.kind == Kind::Mod),
+            // 全部函数：只要定义，模块入口不算函数
+            Scope::All => row.kind.is_symbol(),
+        };
+        if !want {
+            continue;
+        }
+        let module = &index.modules[row.module as usize];
+        hits.push(Hit {
+            kind: row.kind,
+            module: module.module.clone(),
+            path: module.path.clone(),
+            qualname: row.qualname.clone(),
+            def_line: row.def_line,
+            card_id: row.card_id.clone(),
+            is_entry: row.is_entry,
+            field: "module",
+            spans: Vec::new(),
+            score: 0,
+        });
     }
-
-    hits.truncate(query.limit.max(1));
-    Page {
-        hits,
-        suppressed: suppressed.into_iter().collect(),
-    }
+    hits.sort_by(|a, b| {
+        a.module
+            .to_lowercase()
+            .cmp(&b.module.to_lowercase())
+            .then_with(|| a.qualname.to_lowercase().cmp(&b.qualname.to_lowercase()))
+            .then_with(|| a.def_line.cmp(&b.def_line))
+    });
+    Page { hits }
 }
 
 #[cfg(test)]
@@ -436,11 +544,9 @@ mod tests {
 
     fn module(name: &str, path: &str) -> ModuleRef {
         let module_l = name.to_lowercase();
-        let path_l = path.to_lowercase();
         ModuleRef {
-            mask: mask_of(&module_l) | mask_of(&path_l),
+            mask: mask_of(&module_l),
             module_l,
-            path_l,
             module: name.to_string(),
             path: path.to_string(),
         }
@@ -469,88 +575,113 @@ mod tests {
 
     fn sample() -> Index {
         Index {
-            modules: vec![module("pkg.session", "pkg/session.py")],
+            modules: vec![
+                module("pkg.session", "pkg/session.py"),
+                module("pkg.store", "pkg/store.py"),
+                module("hermes_cli.main", "hermes_cli/main.py"),
+            ],
             rows: vec![
                 row(Kind::Func, 0, "get_entry", 10),
                 row(Kind::Func, 0, "get_entry_name", 20),
                 row(Kind::Method, 0, "SessionStore.get_entry", 30),
                 row(Kind::Func, 0, "gather_entries", 40),
+                row(Kind::Func, 1, "delete", 50),
+                row(Kind::Func, 1, "delete_all", 60),
+                row(Kind::Func, 2, "bootstrap", 70),
             ],
         }
     }
 
-    fn all() -> Vec<Kind> {
-        vec![
-            Kind::Func,
-            Kind::Method,
-            Kind::Class,
-            Kind::File,
-            Kind::Mod,
-        ]
+    fn query(text: &str) -> Query {
+        Query::parse(text, Scope::All, None)
+    }
+
+    fn names(page: &Page) -> Vec<&str> {
+        page.hits.iter().map(|h| h.qualname.as_str()).collect()
     }
 
     #[test]
     fn exact_beats_prefix_beats_subsequence() {
-        let idx = sample();
-        let page = run(
-            &idx,
-            &Query {
-                text: "get_entry",
-                kinds: all(),
-                ctx_module: None,
-                limit: 10,
-            },
-        );
-        let names: Vec<&str> = page.hits.iter().map(|h| h.qualname.as_str()).collect();
-        assert_eq!(names[0], "get_entry");
-        assert_eq!(names[1], "SessionStore.get_entry");
-        assert_eq!(names[2], "get_entry_name");
+        let page = run(&sample(), &query(":get_entry"));
+        let got = names(&page);
+        assert_eq!(got[0], "get_entry");
+        assert_eq!(got[1], "SessionStore.get_entry");
+        assert_eq!(got[2], "get_entry_name");
         assert!(page.hits[2].score < page.hits[0].score);
     }
 
     #[test]
     fn subsequence_matches_across_gaps() {
-        let idx = sample();
-        let page = run(
-            &idx,
-            &Query {
-                text: "gente",
-                kinds: all(),
-                ctx_module: None,
-                limit: 10,
-            },
-        );
+        let page = run(&sample(), &query(":gente"));
+        assert!(page.hits.iter().any(|h| h.qualname == "gather_entries"));
+    }
+
+    #[test]
+    fn prefix_alone_lists_every_definition_lexicographically() {
+        let page = run(&sample(), &query("pkg.store:"));
+        let got = names(&page);
+        assert_eq!(got, vec!["delete", "delete_all"]);
+        // 同分按字典序，这条规则固定
+        assert_eq!(page.hits[0].score, page.hits[1].score);
+    }
+
+    #[test]
+    fn prefix_and_name_narrow_together() {
+        let page = run(&sample(), &query("pkg.store:delete_all"));
+        assert_eq!(names(&page), vec!["delete_all"]);
+    }
+
+    #[test]
+    fn module_query_needs_a_real_substring() {
+        // 跨段的拼接不算命中，hermes.cur 不在 hermes_cli.main 里
+        let page = run(&sample(), &query("hermes.cur"));
+        assert!(page.hits.is_empty());
+    }
+
+    #[test]
+    fn plain_text_searches_modules_by_segment() {
+        let mut idx = sample();
+        idx.modules.push(module("cli", "cli.py"));
+        idx.modules.push(module("cli.main", "cli/main.py"));
+        idx.rows.push(row(Kind::Func, 3, "run", 1));
+        idx.rows.push(row(Kind::Func, 4, "boot", 2));
+
+        let page = run(&idx, &query("cli"));
+        let modules: Vec<&str> = page.hits.iter().map(|h| h.module.as_str()).collect();
+        // 段全等 > 段开头 > 段内包含
+        assert_eq!(modules[0], "cli");
+        assert_eq!(modules[1], "cli.main");
         assert!(
-            page.hits.iter().any(|h| h.qualname == "gather_entries"),
-            "subsequence should reach gather_entries"
+            modules.iter().any(|m| *m == "hermes_cli.main"),
+            "段内包含也要命中，hermes_cli 里有 cli 这一段"
+        );
+        // 末尾补冒号与不补完全等价
+        assert_eq!(run(&idx, &query("cli:")).hits.len(), page.hits.len());
+    }
+
+    #[test]
+    fn module_query_accepts_subsequences() {
+        // hercli 命中 hermes_cli，段首起的子序列排在不那么规整的上面
+        let page = run(&sample(), &query("hercli"));
+        assert!(
+            page.hits.iter().any(|h| h.module == "hermes_cli.main"),
+            "hermes_cli 该被 hercli 命中"
         );
     }
 
     #[test]
-    fn filtering_by_kind_reports_what_was_dropped() {
-        let idx = sample();
-        let page = run(
-            &idx,
-            &Query {
-                text: "get_entry",
-                kinds: vec![Kind::Method],
-                ctx_module: None,
-                limit: 10,
-            },
-        );
-        assert_eq!(page.hits.len(), 1);
-        assert_eq!(page.hits[0].kind, Kind::Method);
-        let funcs = page
-            .suppressed
-            .iter()
-            .find(|(k, _)| *k == "func")
-            .map(|(_, n)| *n)
-            .unwrap_or(0);
-        assert_eq!(funcs, 2, "two funcs matched but were filtered out");
+    fn typed_query_ignores_scope() {
+        // 打字时范围不参与过滤，两种范围给同一份结果
+        let entry = Query::parse(":delete", Scope::Entry, None);
+        let all = Query::parse(":delete", Scope::All, None);
+        let a = run(&sample(), &entry);
+        let b = run(&sample(), &all);
+        assert_eq!(a.hits.len(), b.hits.len());
+        assert!(a.hits.iter().any(|h| !h.is_entry));
     }
 
     #[test]
-    fn file_row_hides_its_module_row() {
+    fn results_are_definitions_only() {
         let mut idx = sample();
         idx.rows.push(Row {
             kind: Kind::File,
@@ -565,41 +696,49 @@ mod tests {
         });
         idx.rows.push(Row {
             kind: Kind::Mod,
-            module: 0,
+            module: 2,
             qualname: String::new(),
             def_line: 0,
-            card_id: String::new(),
-            is_entry: false,
-            name_l: "session".to_string(),
+            card_id: "hermes_cli.main:<module>".to_string(),
+            is_entry: true,
+            name_l: "main".to_string(),
             qual_l: String::new(),
-            mask: mask_of("session"),
+            mask: mask_of("main"),
         });
-
-        // 两种都勾：只留文件行
-        let both = run(
-            &idx,
-            &Query {
-                text: "session",
-                kinds: vec![Kind::File, Kind::Mod],
-                ctx_module: None,
-                limit: 10,
-            },
+        let page = run(&idx, &query("main"));
+        assert!(
+            page.hits
+                .iter()
+                .all(|h| h.kind == Kind::Func || h.kind == Kind::Method || h.kind == Kind::Class),
+            "文件与模块不该出现在结果里"
         );
-        assert_eq!(both.hits.len(), 1);
-        assert_eq!(both.hits[0].kind, Kind::File);
+    }
 
-        // 只勾模块：模块行照常出现
-        let only_mod = run(
+    #[test]
+    fn empty_query_browses_instead_of_returning_nothing() {
+        // 空查询按模块名字典序列出，与搜索结果的格式一致
+        let page = run(&sample(), &query(""));
+        assert!(!page.hits.is_empty());
+        let modules: Vec<&str> = page.hits.iter().map(|h| h.module.as_str()).collect();
+        let mut sorted = modules.clone();
+        sorted.sort();
+        assert_eq!(modules, sorted);
+        // 只有一个冒号没有任何约束，等同于空查询
+        assert_eq!(run(&sample(), &query(":")).hits.len(), page.hits.len());
+    }
+
+    #[test]
+    fn entry_scope_keeps_only_entries() {
+        let mut idx = sample();
+        idx.rows[0].is_entry = true;
+        let entry_page = run(
             &idx,
-            &Query {
-                text: "session",
-                kinds: vec![Kind::Mod],
-                ctx_module: None,
-                limit: 10,
-            },
+            &Query::parse("", Scope::Entry, None),
         );
-        assert_eq!(only_mod.hits.len(), 1);
-        assert_eq!(only_mod.hits[0].kind, Kind::Mod);
+        assert!(entry_page.hits.iter().all(|h| h.is_entry));
+        assert_eq!(entry_page.hits.len(), 1);
+        let all_page = run(&idx, &Query::parse("", Scope::All, None));
+        assert!(all_page.hits.len() > entry_page.hits.len());
     }
 
     #[test]
@@ -607,7 +746,6 @@ mod tests {
         // 单个字符只按子串算，不参与子序列，否则一个字母能把整个项目拉出来
         assert_eq!(match_field("abc", "b").map(|m| m.tier), Some(250));
         assert!(match_field("abc", "z").is_none());
-        // 两个字符才允许跨字符命中
         assert!(match_field("abc", "ac").is_some());
     }
 }

@@ -851,7 +851,7 @@ impl Builder {
         if let Some(body) = node.child_by_field_name("body") {
             self.emit_block(body, &id, 0, &mut lines, &mut locals, &qualname);
         }
-        let title = format!("{qualname}({})", params.join(", "));
+        let title = format!("{}({})", crate::display_qual(&qualname), params.join(", "));
 
         self.cards.insert(
             id.clone(),

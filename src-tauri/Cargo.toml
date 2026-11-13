@@ -3,6 +3,13 @@ name = "clew-app"
 version = "0.1.0"
 edition = "2024"
 
+# 只有 release 才带：带上它 Tauri 才把 src/ 嵌进二进制。
+# 不带（日常 debug）时 dev = true，WebView 直接连 build.devUrl 的本地服务，
+# 改前端存盘刷新即可，不用重编。见 tools/dev.ps1。
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

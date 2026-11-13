@@ -1,4 +1,20 @@
 
+// 库里模块级定义叫 `<module>`，界面上叫 __main__（if __name__ == "__main__"）
+// 收藏标记的五角星，与 shell.js 里的 STAR_PATH 是同一个形状，改的时候两边一起改
+const STAR_PATH =
+  "M6 1.4L7.12 4.46L10.38 4.58L7.81 6.59L8.7 9.72L6 7.9L3.3 9.72L4.19 6.59L1.63 4.58L4.88 4.46Z";
+const STAR_SVG =
+  '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor"' +
+  ' stroke-width="1.4" stroke-linejoin="round"' +
+  ' style="position:static;inset:auto;width:12px;height:12px;display:block">' +
+  '<path d="' + STAR_PATH + '"/></svg>';
+
+function showQual(q) { return q === "<module>" ? "__main__" : q; }
+function showId(id) {
+  const i = id.indexOf(":");
+  return i < 0 ? id : id.slice(0, i) + ":" + showQual(id.slice(i + 1));
+}
+
 let DATA = window.__CLEW__ || {};
 let NODES = DATA.cards || {}, CALLS = DATA.calls || {}, ENTRIES = DATA.entries || window.__CLEW_ENTRIES__ || [];
 const SUMMARY = 6, CARD_W = 720, COL_GAP = 70, ROW_GAP = 34, HEAD_H = 26;
@@ -307,7 +323,7 @@ function renderCard(id) {
     '<span class="btn tg">' + toggleLabel(id, st) + '</span>' +
     '<span class="btn pin' +
       (window.__clewIsFavorite && window.__clewIsFavorite(id) ? " on" : "") +
-      '" title="标记为入口">⚑</span>' +
+      '" title="标记为入口">' + STAR_SVG + '</span>' +
     (roots.has(id) ? '' : '<span class="btn close">✕</span>');
   head.onclick = function () { select(id); };
   head.ondblclick = function (e) { e.stopPropagation(); openFocus(id); };
@@ -456,6 +472,7 @@ function classOf(id) {
 function placeCard(id, parentHint) {
   if (!NODES[id] || cardEls[id]) return;
   const el = document.createElement("div");
+  el.dataset.id = id;
   el.style.transition = "none";
   world.appendChild(el);
   cardEls[id] = el;
@@ -742,7 +759,7 @@ function showBubble(cs, ev) {
       if (!ref) return;
       const row = document.createElement("div");
       row.style.cssText = "padding:2px 4px;border-radius:3px;cursor:pointer;color:var(--acc)";
-      row.textContent = (i + 1) + ". " + ref.module + " · " + ref.qualname;
+      row.textContent = (i + 1) + ". " + ref.module + " · " + showQual(ref.qualname);
       row.onmouseenter = function () { row.style.background = "#2d333b"; };
       row.onmouseleave = function () { row.style.background = "transparent"; };
       row.onclick = function () { hideBubble(); expand(cid, c.from, cs); };
@@ -810,7 +827,7 @@ function renderTrail() {
   el.innerHTML = "";
   trail.forEach(function (id, i) {
     const s = document.createElement("span");
-    s.textContent = NODES[id] ? NODES[id].title : id;
+    s.textContent = NODES[id] ? NODES[id].title : showId(id);
     if (i === trail.length - 1) s.className = "cur";
     s.onclick = function () { expand(id); };
     el.appendChild(s);
@@ -1018,6 +1035,28 @@ bootProject(ENTRIES).catch(function (err) {
 
 window.addEventListener("resize", function () { relayout(); });
 graph.addEventListener("scroll", draw);
+
+// 只有用户真的在卡片上点过东西，才算「用过」这张卡：光打开不算。
+// 用捕获阶段挂在画布上，卡片内部的任何点击都能收到，不用逐个绑。
+(function noteCardUse() {
+  let lastId = null;
+  let lastTs = 0;
+  graph.addEventListener(
+    "click",
+    function (e) {
+      const card = e.target && e.target.closest ? e.target.closest(".card") : null;
+      if (!card || !card.dataset.id) return;
+      const id = card.dataset.id;
+      const now = Date.now();
+      // 同一张卡连点几下只记一次，避免把最近列表刷满同一项
+      if (id === lastId && now - lastTs < 5000) return;
+      lastId = id;
+      lastTs = now;
+      if (window.__clewCardUsed) window.__clewCardUsed(id);
+    },
+    true
+  );
+})();
 
 
 // ─── 画布拖拽 ───────────────────────────────────────────────────

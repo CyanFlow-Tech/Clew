@@ -1,0 +1,5 @@
+# 日常构建走 debug：devUrl 指向 tools/dev.ps1 起的静态服务，改前端不用重编。
+# 发版用 `cargo app`，等价于下面这行（release 必须带 custom-protocol，
+# 否则二进制里没有前端资源，src-tauri/src/main.rs 里有编译期断言挡着）。
+[alias]
+app = "build -p clew-app --release --features custom-protocol"

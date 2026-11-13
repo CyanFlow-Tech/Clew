@@ -288,7 +288,7 @@ pub fn snapshot(conn: &Connection, project_id: i64) -> rusqlite::Result<Snapshot
     for (sid, module, qualname, kind) in &symbols {
         let id = card_id(module, qualname);
         let params = params_of.remove(sid).unwrap_or_default();
-        let title = format!("{qualname}({})", params.join(", "));
+        let title = format!("{}({})", crate::display_qual(qualname), params.join(", "));
         let (ctor, ctor_owner, external_base) =
             ctor_of.remove(&id).unwrap_or((None, None, None));
         let card = Card {
@@ -551,7 +551,7 @@ fn one_card(
 ) -> rusqlite::Result<Card> {
     let id = card_id(module, qualname);
     let params = card_params(conn, symbol_id)?;
-    let title = format!("{qualname}({})", params.join(", "));
+    let title = format!("{}({})", crate::display_qual(qualname), params.join(", "));
     let mut card = Card {
         id,
         module: module.to_string(),

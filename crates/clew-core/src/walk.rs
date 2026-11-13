@@ -274,11 +274,15 @@ pub fn rel_path(root: &Path, path: &str) -> String {
 
 /// Every indexed file of a project, ordered by path.
 pub fn files(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec<FileRow>> {
+    // 定义条数走一次 GROUP BY，不给每个模块各跑一条子查询：五万个模块上
+    // 逐条 count 是几十万次索引查找，光这一步就能让面板开不出来。
     let mut stmt = conn.prepare(
-        "SELECT m.module, m.path, m.is_third_party, m.has_main_guard,
-                (SELECT count(*) FROM symbol s
-                  WHERE s.project_id = m.project_id AND s.module = m.module)
+        "SELECT m.module, m.path, m.is_third_party, m.has_main_guard, COALESCE(c.n, 0)
            FROM module m
+           LEFT JOIN (
+                SELECT module, count(*) AS n FROM symbol
+                 WHERE project_id = ?1 GROUP BY module
+           ) c ON c.module = m.module
           WHERE m.project_id = ?1
           ORDER BY m.path",
     )?;
@@ -296,14 +300,42 @@ pub fn files(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec<FileRow
 }
 
 /// Every definition of one file, in source order.
-pub fn symbols_in(conn: &Connection, module: &str) -> rusqlite::Result<Vec<SymbolRow>> {
-    symbols_of(conn, module, true)
+pub fn symbols_in(conn: &Connection, project_id: i64, module: &str) -> rusqlite::Result<Vec<SymbolRow>> {
+    symbols_of(conn, project_id, module, true)
+}
+
+/// 全项目的入口定义，侧栏「入口函数」视图一次取完：通常几十条，比按文件
+/// 一个一个问过去便宜得多。
+pub fn entry_symbols(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec<SymbolRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.module, s.qualname, s.kind, s.def_line, s.entry_confidence
+           FROM symbol s
+          WHERE s.project_id = ?1 AND s.is_entry = 1
+          ORDER BY s.module, s.def_line, s.qualname",
+    )?;
+    let rows = stmt.query_map(params![project_id], |row| {
+        let module: String = row.get(0)?;
+        let qualname: String = row.get(1)?;
+        Ok(SymbolRow {
+            card_id: format!("{module}:{qualname}"),
+            module,
+            qualname,
+            kind: row.get(2)?,
+            def_line: row.get(3)?,
+            is_entry: true,
+            entry_confidence: row.get(4)?,
+            params: Vec::new(),
+            fanin: 0,
+        })
+    })?;
+    rows.collect()
 }
 
 /// 搜索时不需要参数表，少一次 per-symbol 的查询，不然大项目上每次按键都要
 /// 对上万个符号各跑一条 SQL。
 fn symbols_of(
     conn: &Connection,
+    project_id: i64,
     module: &str,
     with_params: bool,
 ) -> rusqlite::Result<Vec<SymbolRow>> {
@@ -311,11 +343,11 @@ fn symbols_of(
         "SELECT s.id, s.qualname, s.kind, s.def_line, s.is_entry, s.entry_confidence,
                 (SELECT count(*) FROM call_site c WHERE c.dst_symbol = s.id)
            FROM symbol s
-          WHERE s.module = ?1
+          WHERE s.project_id = ?1 AND s.module = ?2
           ORDER BY s.def_line, s.qualname",
     )?;
     let mut out = Vec::new();
-    for row in stmt.query_map(params![module], |row| {
+    for row in stmt.query_map(params![project_id, module], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
@@ -349,6 +381,95 @@ fn symbols_of(
         });
     }
     Ok(out)
+}
+
+/// One file with all of its definitions, as the sidebar's symbol tree shows it.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileNode {
+    pub module: String,
+    pub path: String,
+    pub is_third_party: bool,
+    pub has_main_guard: bool,
+    pub symbols: Vec<SymbolRow>,
+}
+
+/// The whole project as a tree: every file in path order, every definition in
+/// source order inside it.
+///
+/// 一次查询取全部定义行，参数表和 fanin 都不带：树里不画它们，而按符号各跑
+/// 一条子查询，几千个符号就是几千次往返，切视图会卡住。
+pub fn tree(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec<FileNode>> {
+    let mut files_stmt = conn.prepare(
+        "SELECT module, path, is_third_party, has_main_guard
+           FROM module
+          WHERE project_id = ?1
+          ORDER BY path",
+    )?;
+    let mut files: Vec<FileNode> = files_stmt
+        .query_map(params![project_id], |row| {
+            let path: String = row.get(1)?;
+            Ok(FileNode {
+                module: row.get(0)?,
+                path: path.trim_start_matches(r"\\?\").to_string(),
+                is_third_party: row.get::<_, i64>(2)? != 0,
+                has_main_guard: row.get::<_, i64>(3)? != 0,
+                symbols: Vec::new(),
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    let mut slot: HashMap<String, usize> = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.module.clone(), i))
+        .collect();
+
+    let mut sym_stmt = conn.prepare(
+        "SELECT module, qualname, kind, def_line, is_entry, entry_confidence
+           FROM symbol
+          WHERE project_id = ?1
+          ORDER BY module, def_line, qualname",
+    )?;
+    let rows = sym_stmt.query_map(params![project_id], |row| {
+        let module: String = row.get(0)?;
+        Ok((
+            module,
+            SymbolRow {
+                card_id: String::new(),
+                module: String::new(),
+                qualname: row.get(1)?,
+                kind: row.get(2)?,
+                def_line: row.get(3)?,
+                is_entry: row.get::<_, i64>(4)? != 0,
+                entry_confidence: row.get(5)?,
+                params: Vec::new(),
+                fanin: 0,
+            },
+        ))
+    })?;
+    for row in rows {
+        let (module, mut sym) = row?;
+        // 符号的 module 在库里一定有对应文件行，除非库被外改过；遇到就补一行
+        let idx = match slot.get(&module) {
+            Some(i) => *i,
+            None => {
+                files.push(FileNode {
+                    module: module.clone(),
+                    path: module.replace('.', "/") + ".py",
+                    is_third_party: false,
+                    has_main_guard: false,
+                    symbols: Vec::new(),
+                });
+                slot.insert(module.clone(), files.len() - 1);
+                files.len() - 1
+            }
+        };
+        sym.card_id = format!("{module}:{}", sym.qualname);
+        sym.module = module;
+        files[idx].symbols.push(sym);
+    }
+
+    Ok(files)
 }
 
 /// Search the entry panel: a file name match lists every definition in that
@@ -452,7 +573,7 @@ pub fn search(
         if !base.contains(&low) && !last.contains(&low) {
             continue;
         }
-        let syms = symbols_of(conn, &module, false)?;
+        let syms = symbols_of(conn, project_id, &module, false)?;
         // 一条定义都没有的文件不能当入口，直接跳过
         if syms.is_empty() {
             continue;

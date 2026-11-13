@@ -73,24 +73,38 @@ enum Command {
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
     },
-    /// Search symbols, files and modules with one ranking
+    /// Print the sidebar symbol tree: every file and the definitions inside it
+    Tree {
+        /// Project root
+        project: PathBuf,
+        /// Print the whole tree as JSON instead of an outline
+        #[arg(long)]
+        json: bool,
+        /// How many outline rows to print
+        #[arg(long, default_value = "60")]
+        rows: usize,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
+    /// Search definitions. Use `prefix:name`, `prefix:`, `:name` or bare text
     Search {
         /// Project root
         project: PathBuf,
-        /// Search text
+        /// Query text. A colon splits the module prefix from the definition name
         q: String,
-        /// kinds to include: func,method,class,file,mod (default all)
-        #[arg(long, value_delimiter = ',')]
-        kinds: Vec<String>,
-        /// How many hits to print
-        #[arg(long, default_value = "30")]
-        limit: usize,
+        /// Result scope: entry (default) or all
+        #[arg(long, default_value = "entry")]
+        scope: String,
         /// Module to boost, usually the one being read
         #[arg(long)]
         ctx: Option<String>,
         /// Index path; relative paths resolve against the project root
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
+        /// Print the page as JSON instead of a table
+        #[arg(long)]
+        json: bool,
     },
     /// Search definitions; a file-name hit lists that file's definitions
     Find {
@@ -247,7 +261,9 @@ fn main() -> anyhow::Result<()> {
         Command::Files { project, db } => {
             let root = project.canonicalize()?;
             let (conn, project_id) = open_index(&root, db)?;
+            let t = std::time::Instant::now();
             let mut rows = clew_core::walk::files(&conn, project_id)?;
+            let took = t.elapsed().as_secs_f64() * 1000.0;
             for r in rows.iter_mut() {
                 r.path = clew_core::walk::rel_path(&root, &r.path);
             }
@@ -266,11 +282,12 @@ fn main() -> anyhow::Result<()> {
             }
             let third = rows.iter().filter(|r| r.is_third_party).count();
             println!("\n{} files ({third} third party)", rows.len());
+            eprintln!("[t] files query took {took:.1}ms");
         }
         Command::Symbols { project, module, db } => {
             let root = project.canonicalize()?;
-            let (conn, _project_id) = open_index(&root, db)?;
-            let rows = clew_core::walk::symbols_in(&conn, &module)?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let rows = clew_core::walk::symbols_in(&conn, project_id, &module)?;
             if rows.is_empty() {
                 println!("no symbols in {module}");
                 return Ok(());
@@ -288,54 +305,95 @@ fn main() -> anyhow::Result<()> {
             }
             println!("\n{} symbols in {module}", rows.len());
         }
+        Command::Tree {
+            project,
+            json,
+            rows: limit,
+            db,
+        } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let t = std::time::Instant::now();
+            let mut files = clew_core::walk::tree(&conn, project_id)?;
+            for f in files.iter_mut() {
+                f.path = clew_core::walk::rel_path(&root, &f.path);
+            }
+            let took = t.elapsed().as_secs_f64() * 1000.0;
+            if json {
+                println!("{}", serde_json::to_string(&files)?);
+                eprintln!(
+                    "[t] tree files={} symbols={} took {took:.1}ms",
+                    files.len(),
+                    files.iter().map(|f| f.symbols.len()).sum::<usize>()
+                );
+                return Ok(());
+            }
+            let mut printed = 0usize;
+            for f in &files {
+                if printed >= limit {
+                    break;
+                }
+                println!("{}  ({})", f.path, f.module);
+                printed += 1;
+                for s in &f.symbols {
+                    if printed >= limit {
+                        break;
+                    }
+                    println!(
+                        "  {:<5} {:<7} {}{}",
+                        s.def_line,
+                        s.kind,
+                        s.qualname,
+                        if s.is_entry { "  [entry]" } else { "" }
+                    );
+                    printed += 1;
+                }
+            }
+            let symbols: usize = files.iter().map(|f| f.symbols.len()).sum();
+            let third = files.iter().filter(|f| f.is_third_party).count();
+            println!(
+                "\n{} files ({third} third party), {symbols} symbols, took {took:.1}ms",
+                files.len()
+            );
+        }
         Command::Search {
             project,
             q,
-            kinds,
-            limit,
+            scope,
             ctx,
             db,
+            json,
         } => {
             let root = project.canonicalize()?;
             let (conn, project_id) = open_index(&root, db)?;
             let t = std::time::Instant::now();
             let index = clew_core::search::build_index(&conn, project_id)?;
             let built = t.elapsed();
-            let want: Vec<clew_core::search::Kind> = if kinds.is_empty() {
-                vec![
-                    clew_core::search::Kind::Func,
-                    clew_core::search::Kind::Method,
-                    clew_core::search::Kind::Class,
-                    clew_core::search::Kind::File,
-                    clew_core::search::Kind::Mod,
-                ]
-            } else {
-                kinds
-                    .iter()
-                    .filter_map(|k| clew_core::search::Kind::parse(k))
-                    .collect()
-            };
             let t = std::time::Instant::now();
-            let page = clew_core::search::run(
-                &index,
-                &clew_core::search::Query {
-                    text: &q,
-                    kinds: want,
-                    ctx_module: ctx.as_deref(),
-                    limit,
-                },
+            let query = clew_core::search::Query::parse(
+                &q,
+                clew_core::search::Scope::parse(&scope),
+                ctx.clone(),
             );
+            let page = clew_core::search::run(&index, &query);
             let took = t.elapsed();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+                return Ok(());
+            }
             println!(
                 "{:<6}  {:<7}  {:<8}  {:<44}  {}",
                 "score", "kind", "field", "qualname", "file:line"
             );
             for h in &page.hits {
-                let name = if h.qualname.is_empty() {
+                let mut name = if h.qualname.is_empty() {
                     h.module.clone()
                 } else {
                     h.qualname.clone()
                 };
+                if h.kind == clew_core::search::Kind::Mod && !h.card_id.is_empty() {
+                    name.push_str("  <entry>");
+                }
                 println!(
                     "{:<6}  {:<7}  {:<8}  {:<44}  {}:{}",
                     h.score,
@@ -347,9 +405,8 @@ fn main() -> anyhow::Result<()> {
                 );
             }
             println!(
-                "\n{} hits, suppressed {:?}, index {} rows in {:.1}ms, query {:.1}ms",
+                "\n{} hits, index {} rows in {:.1}ms, query {:.1}ms",
                 page.hits.len(),
-                page.suppressed,
                 index.rows.len(),
                 built.as_secs_f64() * 1000.0,
                 took.as_secs_f64() * 1000.0

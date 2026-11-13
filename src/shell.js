@@ -24,6 +24,48 @@
     logToFile("reject " + (r && (r.message || String(r))));
   });
 
+  // ── 开发期热重载 ────────────────────────────────────────────────
+  // dev 构建的窗口连的是 tools/dev.ps1 起的本地服务，页面源就是 127.0.0.1。
+  // 盯着 shell.js 的 Last-Modified，文件一变就整页重载，改完存盘即见。
+  // 发版时页面源是 tauri.localhost，这里不会触发。
+  (function hotReload() {
+    const host = location.hostname;
+    if (host !== "127.0.0.1" && host !== "localhost") return;
+    // 四个文件都要盯：只盯 shell.js 的话，改了 app.js 页面不会自己刷
+    const FILES = ["index.html", "app.js", "shell.js", "themes.js"];
+    let stamp = null;
+    setInterval(function () {
+      Promise.all(
+        FILES.map(function (f) {
+          return fetch(f, { method: "HEAD", cache: "no-store" })
+            .then(function (r) {
+              // 同一秒里改两次 mtime 分不出来，长度也算一票
+              return (r.headers.get("last-modified") || "") + "/" +
+                (r.headers.get("content-length") || "");
+            })
+            .catch(function () {
+              return "?";
+            });
+        })
+      )
+        .then(function (parts) {
+          const now = parts.join(",");
+          if (stamp && now !== stamp) location.reload();
+          stamp = now;
+        })
+        .catch(function () {
+          /* 服务停了就等它回来 */
+        });
+    }, 900);
+  })();
+
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
+      e.preventDefault();
+      location.reload();
+    }
+  });
+
   // ── 样式 ────────────────────────────────────────────────────────
   const style = document.createElement("style");
   style.textContent = `
@@ -49,8 +91,12 @@
       background:rgba(255,255,255,.19);
       border-color:rgba(255,255,255,.12);
     }
-    #graph{inset:78px 0 0 0!important}
-    #focus{inset:78px 0 0 0!important}
+    /* 活动栏是一直在的（折叠只是收起面板），所以画布左边至少让出 40px，
+       否则折叠后卡片会钻到活动栏底下 */
+    #graph{inset:78px 0 0 40px!important}
+    #focus{inset:78px 0 0 40px!important}
+    #tb-row2{margin-left:40px}
+    #hint{left:56px}
     #tb-row1{display:flex;align-items:center;gap:8px;height:44px;flex:none;
       padding-left:10px;background:
         linear-gradient(96deg, var(--tint-a) 0%, var(--tint-b) 58%,
@@ -267,8 +313,18 @@
     #entry-panel[hidden]{display:none}
     .ep-top{display:flex;flex:0 0 auto;max-height:38%;min-height:0;background:#141920;
       border-bottom:1px solid #30363d}
-    .ep-cols{display:flex;flex:1;min-height:0}
-    .ep-col-l{flex:0 0 42%;width:42%;border-right:1px solid #262c34;
+    /* 单栏列表：占据搜索带以下的全部高度 */
+    .ep-one{display:flex;flex:1;min-height:0;flex-direction:column}
+    .ep-one-head{gap:10px}
+    .ep-switch{margin-left:auto;display:flex;border:1px solid #2a313a;border-radius:5px;
+      overflow:hidden}
+    .ep-switch button{background:none;border:none;color:#8b95a2;font:inherit;font-size:11px;
+      padding:2px 10px;cursor:pointer;line-height:16px}
+    .ep-switch button:hover{color:#c6d0da;background:#1d2530}
+    .ep-switch button.on{background:#243040;color:var(--acc)}
+    .ep-switch button + button{border-left:1px solid #2a313a}
+    .ep-one-head > span#ep-one-title{color:#8b95a2}
+    .ep-col-l{flex:1 1 auto;width:100%;
       display:flex;flex-direction:column;min-height:0}
     .ep-col-r{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
     /* 搜索带是下排的抬头：底色比上排亮一档，和下面两块连成一组 */
@@ -329,12 +385,21 @@
     .ep-node.file .ic{color:#58a6ff;opacity:.75}
     .ep-node.sym .ic{color:#f0883e;opacity:.85}
     .ep-node .nm{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+    /* 扁平结果：模块前缀降一级，末段仍是主色，同一模块的行会纵向对齐 */
+    .ep-node .q-prefix{color:#6b7784}
+    .qrow .q-pre{color:#6b7784}
+    .qrow .q-sep{color:#3f4854;margin:0 2px}
+    .qrow .q-fn{color:#c8d2dc}
+    .qrow b{color:#ffd479;font-weight:600}
+    .ep-node.flatq{padding-top:3px;padding-bottom:3px}
     .ep-node .tail{display:flex;align-items:center;gap:7px;flex:none;margin-left:auto}
     .ep-node .ln,.ep-node .cnt{flex:none;color:#4a525c;font-size:10px}
     .ep-node .flag{flex:none;color:#3c454f;padding:2px 3px;border-radius:3px;
       display:inline-flex;align-items:center;gap:3px;line-height:0}
     .ep-node:hover .flag{color:#8b95a2}
     .ep-node .flag.on{color:#e3b341}
+    .ep-node .flag svg path{fill:none}
+    .ep-node .flag.on svg path{fill:currentColor}
     .ep-node .flag:hover{background:#2b2416;color:#ffd479}
     .ep-node .flag svg{display:block}
     .ep-node b{color:#ffd479;font-weight:600;background:rgba(255,212,121,.10);border-radius:2px}
@@ -1289,6 +1354,7 @@
         try {
           const info = await api.invoke("open_project", { path: path });
           await bootProject(info && info.entries);
+          setSideOpen(true);
           setStatus("");
           setNote("");
         } catch (err) {
@@ -1337,6 +1403,7 @@
       setStatus("");
       enterProject(path);
       await bootProject(info && info.entries);
+      setSideOpen(true);
     } catch (err) {
       setStatus(String(err), true);
       setNote(String(err), true);
@@ -1416,6 +1483,7 @@
     renderProjectButton();
     setStatus("");
     showWelcome();
+    spSyncProject();
   }
 
   // ── 启动 ────────────────────────────────────────────────────────
@@ -1438,120 +1506,79 @@
   }
 
   // ── 入口面板 ────────────────────────────────────────────────────
-  // 四块：上面自定义入口与最近入口常驻，中间一条输入带种类勾选，下面符号结果
-  // 与文件结果。空查询时下面两块退回扫描入口与文件树。搜索由后端统一打分，
-  // 前端只按种类分队渲染。
+  // 面板只做一件事：按名字找到定义，回车设为根，关掉。
+  // 顶部两块是常用入口，下面是搜索框与结果。文件树不在这里，它是主界面的侧栏。
+  //
+  // 查询只有两级。冒号左边是模块前缀，字面匹配，右边是函数名，分四级命中。
+  // 没有冒号时整串同时试两边，函数名命中优先，补上冒号只是收紧，画面不会翻。
+  // 收藏标记统一用五角星：未收藏描边，收藏后填色（见 .flag.on path{fill}）。
+  // 这条 path 与 app.js 里的 STAR_PATH 是同一个形状，改的时候两边一起改。
+  const STAR_PATH =
+    "M6 1.4L7.12 4.46L10.38 4.58L7.81 6.59L8.7 9.72L6 7.9L3.3 9.72L4.19 6.59L1.63 4.58L4.88 4.46Z";
   const FLAG_SVG =
-    '<svg viewBox="0 0 12 12" width="12" height="12" ' +
-    'style="position:static;inset:auto;width:12px;height:12px;display:block">' +
-    '<path d="M2.2 1.1v9.8" stroke="currentColor" stroke-width="1.1" fill="none"/>' +
-    '<path d="M2.2 2h7.3L7.7 4.2l1.8 2.2H2.2z" fill="currentColor"/></svg>';
-
-  // 面板里的图标统一从这里出，尺寸写成 inline，免得被页面那条 svg 全局规则撑开
-  function panelIcon(body) {
-    return (
-      '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" ' +
-      'stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" ' +
-      'style="position:static;inset:auto;width:12px;height:12px;display:block">' +
-      body +
-      "</svg>"
-    );
-  }
-  const ICON_FOLDER = panelIcon('<path d="M1.5 3.3h3.1l1 1.2h4.9v5.9H1.5z"/>');
-  const ICON_FOLDER_OPEN =
-    panelIcon('<path d="M1.5 3.3h3.1l1 1.2h4.9v1.2H1.5z"/><path d="M1.5 5.7h9.4l-1.3 4.7H1.5z"/>');
-  const ICON_FILE =
-    panelIcon('<path d="M3.1 1.6h3.4l2.4 2.4v6.4H3.1z"/><path d="M6.5 1.6v2.4h2.4"/>');
-
-  const KIND_LABELS = [
-    ["func", "函数"],
-    ["method", "方法"],
-    ["class", "类"],
-    ["file", "文件"],
-    ["mod", "模块"],
-  ];
-  const KINDS_KEY = "clew.searchKinds";
+    '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor"' +
+    ' stroke-width="1.4" stroke-linejoin="round"' +
+    ' style="position:static;inset:auto;width:12px;height:12px;display:block">' +
+    '<path d="' + STAR_PATH + '"/></svg>';
 
   const panel = document.createElement("div");
   panel.id = "entry-panel";
   panel.hidden = true;
   panel.innerHTML =
+    // 「最近」搬到侧栏视图里了，这里只留自定义入口一栏
     '<div class="ep-top">' +
       '<div class="ep-col-l"><div class="ep-head">自定义入口<span class="n" id="ep-fav-count"></span></div>' +
         '<div class="ep-list" id="ep-fav-list"></div></div>' +
-      '<div class="ep-col-r"><div class="ep-head">最近<span class="n" id="ep-recent-count"></span></div>' +
-        '<div class="ep-list" id="ep-recent-list"></div></div>' +
     "</div>" +
     '<div class="ep-bar">' +
-      '<input id="ep-q" placeholder="搜索 函数 / 方法 / 类 / 文件 / 模块" autocomplete="off">' +
-      '<div class="ep-kinds">' +
-        KIND_LABELS.map(
-          ([k, label]) =>
-            '<label title="Ctrl+' + (KIND_LABELS.findIndex((x) => x[0] === k) + 1) + '">' +
-            '<input type="checkbox" data-kind="' + k + '">' + label + "</label>"
-        ).join("") +
-      "</div>" +
+      '<input id="ep-q" placeholder="hermes_cli.curator:main   ·   hermes_cli.   ·   :main" ' +
+        'autocomplete="off" spellcheck="false">' +
     "</div>" +
-    '<div class="ep-cols">' +
-      '<div class="ep-col-l ep-left"><div class="ep-head">符号<span class="n" id="ep-sym-count"></span></div>' +
-        '<div class="ep-list" id="ep-sym-list"></div></div>' +
-      '<div class="ep-col-r"><div class="ep-head">文件与模块<span class="n" id="ep-path-count"></span></div>' +
-        '<div class="ep-list" id="ep-path-list"></div></div>' +
+    '<div class="ep-one">' +
+      '<div class="ep-head ep-one-head"><span id="ep-one-title">自动识别</span>' +
+        '<span class="n" id="ep-one-count"></span>' +
+        '<span class="ep-switch">' +
+          '<button type="button" data-scope="entry">自动识别</button>' +
+          '<button type="button" data-scope="all">全部函数</button>' +
+        "</span>" +
+      "</div>" +
+      '<div class="ep-list" id="ep-one-list"></div>' +
     "</div>" +
     '<div class="ep-foot">' +
       '<span><span class="k">↵</span> 设为根</span>' +
-      '<span><span class="k">⚑</span> 标记入口</span>' +
-      '<span><span class="k">Ctrl+1..5</span> 种类</span>' +
+      '<span><span class="k">★</span> 标记入口</span>' +
+      '<span><span class="k">Esc</span> 关闭</span>' +
       '<span class="right" id="ep-marked"></span>' +
     "</div>";
   document.body.appendChild(panel);
 
   const qInput = panel.querySelector("#ep-q");
   const favEntryList = panel.querySelector("#ep-fav-list");
-  const recentEntryList = panel.querySelector("#ep-recent-list");
-  const symHitList = panel.querySelector("#ep-sym-list");
-  const pathHitList = panel.querySelector("#ep-path-list");
-  const kindBoxes = Array.from(panel.querySelectorAll("[data-kind]"));
+  const oneList = panel.querySelector("#ep-one-list");
+  const scopeBtns = Array.from(panel.querySelectorAll("[data-scope]"));
 
   let panelOpen = false;
-  let fileCache = null;              // files() 的结果，懒加载一次
-  let fileByModule = new Map();      // module -> FileRow
-  let symCache = new Map();          // module -> SymbolRow[]
   let rootData = { favorites: [], recent: [] };
   let searchSeq = 0;
-  let hits = { syms: [], paths: [], suppressed: [] };
-  const openDirs = new Set();
-  const openFiles = new Set();
-  const openGroups = new Set();
-  const collapsedFiles = new Set();   // 结果里被收起的文件组
-
-  // 勾选状态落盘，重开软件不用再拨一遍
-  const kinds = { func: true, method: true, class: true, file: true, mod: true };
+  let hits = [];
+  const SCOPE_KEY = "clew.searchScope";
+  let scope = "entry";
   try {
-    const saved = JSON.parse(localStorage.getItem(KINDS_KEY) || "null");
-    if (saved) KIND_LABELS.forEach(([k]) => { kinds[k] = saved[k] !== false; });
+    const saved = localStorage.getItem(SCOPE_KEY);
+    if (saved === "entry" || saved === "all") scope = saved;
   } catch (err) {
-    /* 读不出来就全选 */
+    /* 读不出来就用默认 */
   }
-  function saveKinds() {
+  function saveScope() {
     try {
-      localStorage.setItem(KINDS_KEY, JSON.stringify(kinds));
+      localStorage.setItem(SCOPE_KEY, scope);
     } catch (err) {
       /* 隐私模式写不进就算了 */
     }
   }
-  function syncBoxes() {
-    kindBoxes.forEach((b) => { b.checked = kinds[b.dataset.kind] !== false; });
-  }
-  function enabledKinds() {
-    return KIND_LABELS.map(([k]) => k).filter((k) => kinds[k]);
-  }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  function hl(text) {
-    return esc(text);
   }
   /// 后端给的是字节偏移，纯 ASCII 时与 JS 下标一致，否则放弃上色
   function markSpans(text, spans) {
@@ -1576,38 +1603,43 @@
       ? { module: id, qualname: id }
       : { module: id.slice(0, i), qualname: id.slice(i + 1) };
   }
-  function shortName(id) {
-    const parts = splitId(id);
-    if (parts.qualname === "<module>") {
-      return parts.module.split(".").pop() || parts.module;
-    }
-    return parts.qualname.split(".").pop() || parts.qualname;
-  }
-  function fileNameOf(module) {
-    const f = fileByModule.get(module);
-    if (f) return f.path.split("/").pop();
-    return (module.split(".").pop() || module) + ".py";
-  }
-  function scannedEntries() {
-    return (typeof ENTRIES !== "undefined" ? ENTRIES : []).filter((e) => e && e.id);
-  }
+  /// 当前打开的模块，用于给同模块的命中加分
   function activeModule() {
     const id = window.getActiveRoot ? window.getActiveRoot() : null;
     return id ? splitId(id).module : null;
   }
+  function scannedEntries() {
+    return (typeof ENTRIES !== "undefined" ? ENTRIES : []).filter((e) => e && e.id);
+  }
 
-  // 一行入口：名字、文件、旗标。入口栏不参与打分，只按原样列。
+  /// 卡片 id（module:qualname）的显示形式，模块级换成 __main__
+  function showId(id) {
+    const i = String(id).indexOf(":");
+    if (i < 0) return String(id);
+    return String(id).slice(0, i) + ":" + showQual(String(id).slice(i + 1));
+  }
+  /// 显示名：库里的 <module> 就是 if __name__ == "__main__" 那一块
+  function showQual(qual) {
+    return qual === "<module>" ? "__main__" : qual;
+  }
+
+  function shortName(id) {
+    const parts = splitId(id);
+    // 模块级入口就是 if __name__ == "__main__" 那一块，名字叫 __main__，
+    // 别再拿文件名冒充函数名
+    if (parts.qualname === "<module>") return "__main__";
+    return parts.qualname.split(".").pop() || parts.qualname;
+  }
+
+  // 一行快捷入口：名字、模块、旗标
   function entryRow(id) {
     const star = rootData.favorites.indexOf(id) >= 0;
-    const isEntry = scannedEntries().some((e) => e.id === id);
     return (
       '<div class="ep-node sym" data-root="' + esc(id) + '">' +
         '<span class="ic">\u0192</span>' +
-        '<span class="nm">' + hl(shortName(id)) + "</span>" +
-        (isEntry ? '<span class="ep-dot" title="扫描器认定的入口"></span>' : "") +
+        '<span class="nm">' + esc(shortName(id)) + "</span>" +
         '<span class="tail">' +
-          '<span class="ln" title="' + esc(fileNameOf(splitId(id).module)) + '">' +
-            esc(splitId(id).module) + "</span>" +
+          '<span class="ln">' + esc(splitId(id).module) + "</span>" +
           '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(id) +
             '" title="标记入口">' + FLAG_SVG + "</span>" +
         "</span>" +
@@ -1615,281 +1647,122 @@
     );
   }
 
-  // 一行搜索结果。符号可以设为根，文件与模块点开回到文件树里那一行。
-  //
-  // 名字只放最后一段，尾部放它所在的容器，这样同名的 main 能分清：
-  // 符号给模块与行号，文件给目录，模块给父模块。命中的高亮永远落在名字上，
-  // 而名字和 spans 都按最后一段算，两者才对得上。
-  function hitRow(h, indent) {
-    const isSymbol = h.kind === "func" || h.kind === "method" || h.kind === "class";
-    const pad = indent ? ' style="padding-left:' + indent + 'px"' : "";
-    const star = isSymbol && rootData.favorites.indexOf(h.card_id) >= 0;
-    const label = isSymbol
-      ? (h.qualname.split(".").pop() || h.qualname)
-      : h.kind === "file"
-        ? (h.path.split("/").pop() || h.path)
-        : (h.module.split(".").pop() || h.module);
-    const icon = h.kind === "class" ? "C" : h.kind === "file" ? ICON_FILE : h.kind === "mod" ? "\u25a4" : "\u0192";
-    const text = h.field === "name" ? markSpans(label, h.spans) : esc(label);
-    const dir = h.path.split("/").slice(0, -1).join("/");
-    const where = isSymbol
-      ? (indent ? "L" + h.def_line : h.module + ":" + h.def_line)
-      : h.kind === "file"
-        ? (dir || ".")
-        : (h.module.split(".").slice(0, -1).join(".") ||
-           (h.path.split("/").pop() || dir || "."));
-    const tailTitle = isSymbol ? h.path + ":" + h.def_line : h.path;
-    const attrs = isSymbol
-      ? ' data-root="' + esc(h.card_id) + '"'
-      : ' data-open="' + esc(h.module) + '"';
+  /// 前缀太长时省中间，保住头一段与末一段，否则整串被 CSS 截掉尾巴
+  function shortenModule(module) {
+    if (module.length <= 34) return module;
+    const segs = module.split(".");
+    if (segs.length < 3) return module;
+    return segs[0] + ".…." + segs.slice(-1)[0];
+  }
+
+  // 一行结果，格式固定为 模块:qualname，右侧只有行号
+  function resultRow(h) {
+    const qn = h.qualname || "";
+    const lastSeg = qn.split(".").pop() || qn;
+    const shortened = shortenModule(h.module || "");
+    const cut = shortened !== (h.module || "");
+    // 命中区间换算到展示位置
+    const nameOff = h.field === "name" ? qn.length - lastSeg.length : 0;
+    const preHtml =
+      h.field === "module" && !cut
+        ? markSpans(h.module || "", h.spans)
+        : esc(shortened);
+    const nameHtml =
+      (h.field === "name" || h.field === "qualname") && !cut
+        ? markSpans(qn, (h.spans || []).map(([a, b]) => [a + nameOff, b + nameOff]))
+        : esc(qn);
+    const star = rootData.favorites.indexOf(h.card_id) >= 0;
+    const icon = h.kind === "class" ? "C" : h.kind === "method" ? "\u0192" : "\u0192";
     return (
-      '<div class="ep-node sym" data-kindrow="' + h.kind + '"' + attrs + pad + ">" +
+      '<div class="ep-node sym qrow" data-root="' + esc(h.card_id) + '">' +
         '<span class="ic">' + icon + "</span>" +
-        '<span class="nm">' + text + "</span>" +
+        '<span class="nm"><span class="q-pre">' + preHtml + "</span>" +
+          '<span class="q-sep">:</span><span class="q-fn">' + nameHtml + "</span></span>" +
+        (h.is_entry ? '<span class="ep-dot" title="自动识别的入口"></span>' : "") +
         '<span class="tail">' +
-          '<span class="ln" title="' + esc(tailTitle) + '">' + esc(where) + "</span>" +
-          (isSymbol
-            ? '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(h.card_id) +
-              '" title="标记入口">' + FLAG_SVG + "</span>"
+          (h.kind !== "mod" && h.def_line
+            ? '<span class="ln" title="' + esc(h.path) + '">L' + h.def_line + "</span>"
             : "") +
-        "</span>" +
-      "</div>"
-    );
-  }
-
-  function scanGroups(rows) {
-    const groups = new Map();
-    rows.forEach((r) => {
-      const top = splitId(r.id).module.split(".")[0] || "其他";
-      if (!groups.has(top)) groups.set(top, []);
-      groups.get(top).push(r);
-    });
-    return groups;
-  }
-
-  // 上左：自定义入口
-  function paintFavs() {
-    const favs = rootData.favorites;
-    favEntryList.innerHTML = favs.length
-      ? favs.map((id) => entryRow(id)).join("")
-      : '<div class="ep-empty">给函数按 ⚑ 就会出现在这里</div>';
-    panel.querySelector("#ep-fav-count").textContent = String(favs.length);
-  }
-
-  // 上右：最近
-  function paintRecent() {
-    const recent = rootData.recent.filter((id) => rootData.favorites.indexOf(id) < 0);
-    recentEntryList.innerHTML = recent.length
-      ? recent.map((id) => entryRow(id)).join("")
-      : '<div class="ep-empty">打开过的入口按时间排在这里</div>';
-    panel.querySelector("#ep-recent-count").textContent = String(recent.length);
-  }
-
-  function paintIdleSyms() {
-    const scanned = scannedEntries();
-    if (!scanned.length) {
-      symHitList.innerHTML = '<div class="ep-empty">扫描器没有找到入口，用上面的搜索挑一个</div>';
-      panel.querySelector("#ep-sym-count").textContent = "0";
-      return;
-    }
-    let html = "";
-    const groups = scanGroups(scanned);
-    if (!openGroups.size) {
-      const first = groups.keys().next();
-      if (!first.done) openGroups.add(first.value);
-    }
-    groups.forEach((rows, name) => {
-      const open = openGroups.has(name);
-      html += '<div class="ep-grp" data-group="' + esc(name) + '"><span>' +
-        (open ? "▾" : "▸") + "</span>" + esc(name) +
-        '<span class="n">' + rows.length + "</span></div>";
-      if (open) html += rows.map((r) => entryRow(r.id)).join("");
-    });
-    symHitList.innerHTML = html;
-    panel.querySelector("#ep-sym-count").textContent = String(scanned.length);
-  }
-
-  // 文件树
-  function buildTree(rows) {
-    const root = { dirs: new Map(), files: [] };
-    rows.forEach((r) => {
-      const parts = r.path.split("/");
-      const name = parts.pop();
-      let node = root;
-      let prefix = "";
-      parts.forEach((p) => {
-        prefix = prefix ? prefix + "/" + p : p;
-        if (!node.dirs.has(p)) node.dirs.set(p, { path: prefix, dirs: new Map(), files: [] });
-        node = node.dirs.get(p);
-      });
-      node.files.push({ name: name, row: r });
-    });
-    return root;
-  }
-
-  function dirRow(node, depth) {
-    const open = openDirs.has(node.path);
-    return (
-      '<div class="ep-node" data-dir="' + esc(node.path) + '" style="padding-left:' +
-        (depth * 14 + 8) + 'px">' +
-        '<span class="arw">' + (open ? "▾" : "▸") + "</span>" +
-        '<span class="ic">' + (open ? ICON_FOLDER_OPEN : ICON_FOLDER) + "</span>" +
-        '<span class="nm">' + esc(node.path.split("/").pop()) + "</span>" +
-        '<span class="tail"><span class="cnt">' + countFiles(node) + "</span></span></div>"
-    );
-  }
-  function countFiles(node) {
-    let n = node.files.length;
-    node.dirs.forEach((d) => { n += countFiles(d); });
-    return n;
-  }
-  function fileRow(row, depth) {
-    const open = openFiles.has(row.module);
-    return (
-      '<div class="ep-node file" data-file="' + esc(row.module) + '" style="padding-left:' +
-        (depth * 14 + 8) + 'px">' +
-        '<span class="arw">' + (open ? "▾" : "▸") + "</span>" +
-        '<span class="ic">' + ICON_FILE + "</span>" +
-        '<span class="nm">' + esc(row.path.split("/").pop()) + "</span>" +
-        (row.has_main_guard ? '<span class="ep-dot" title="有 __main__ 块"></span>' : "") +
-        '<span class="tail"><span class="cnt">' + row.symbols + "</span></span></div>"
-    );
-  }
-  function symRow(s, depth) {
-    const star = rootData.favorites.indexOf(s.card_id) >= 0;
-    const isCls = s.kind === "class";
-    return (
-      '<div class="ep-node sym" data-root="' + esc(s.card_id) + '" style="padding-left:' +
-        (depth * 14 + 8) + 'px">' +
-        '<span class="arw"></span>' +
-        '<span class="ic">' + (isCls ? "C" : "\u0192") + "</span>" +
-        '<span class="nm">' + esc(shortName(s.card_id)) + "</span>" +
-        (s.is_entry ? '<span class="ep-dot" title="扫描器认定的入口"></span>' : "") +
-        '<span class="tail">' +
-          '<span class="ln">L' + s.def_line + "</span>" +
-          '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(s.card_id) +
+          '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(h.card_id) +
             '" title="标记入口">' + FLAG_SVG + "</span>" +
         "</span>" +
       "</div>"
     );
   }
 
-  function paintTree() {
-    const tree = buildTree(fileCache || []);
-    const out = [];
-    (function walk(node, depth) {
-      node.dirs.forEach((child) => {
-        out.push(dirRow(child, depth));
-        if (openDirs.has(child.path)) walk(child, depth + 1);
-      });
-      node.files.forEach((f) => {
-        out.push(fileRow(f.row, depth));
-        if (openFiles.has(f.row.module)) {
-          (symCache.get(f.row.module) || []).forEach((s) => out.push(symRow(s, depth + 1)));
-        }
-      });
-    })(tree, 0);
-    pathHitList.innerHTML = out.join("") || '<div class="ep-empty">这个项目没有 Python 文件</div>';
-    panel.querySelector("#ep-path-count").textContent = String((fileCache || []).length);
+  function paintFavs() {
+    const favs = rootData.favorites;
+    favEntryList.innerHTML = favs.length
+      ? favs.map((id) => entryRow(id)).join("")
+      : '<div class="ep-empty">给定义按 ★ 就会出现在这里</div>';
+    panel.querySelector("#ep-fav-count").textContent = String(favs.length);
   }
 
-  // 被勾选挡掉的命中要说出来，否则会以为项目里没有
-  function suppressedNote(kinds, names) {
-    const items = hits.suppressed
-      .filter(([k, n]) => names.indexOf(k) >= 0 && n > 0)
-      .map(([k, n]) => {
-        const label = (KIND_LABELS.find((x) => x[0] === k) || ["", k])[1];
-        return '<span class="ep-more" data-allow="' + k + '">另有 ' + n + " 个" + label + "命中</span>";
+  function syncScope() {
+    scopeBtns.forEach((b) => b.classList.toggle("on", b.dataset.scope === scope));
+  }
+
+  function paintResults() {
+    const typing = !!qInput.value.trim();
+    panel.querySelector("#ep-one-title").textContent =
+      typing ? "结果" : scope === "entry" ? "自动识别" : "全部函数";
+    oneList.innerHTML = hits.length
+      ? hits.map((h) => resultRow(h)).join("")
+      : '<div class="ep-empty">' +
+        (typing ? "没有匹配的定义" : scope === "entry" ? "扫描器没有找到入口" : "没有定义") +
+        "</div>";
+    panel.querySelector("#ep-one-count").textContent = String(hits.length);
+  }
+
+  // 空查询拉一份浏览列表，与搜索走同一个接口、同一种行格式
+  async function loadBrowse() {
+    if (!desktop) {
+      // 浏览器预览没有后端，只能拿导出数据里的入口凑一份
+      const entries = scannedEntries().slice();
+      entries.sort(function (a, b) {
+        const ma = splitId(a.id).module.toLowerCase();
+        const mb = splitId(b.id).module.toLowerCase();
+        return ma < mb ? -1 : ma > mb ? 1 : a.id < b.id ? -1 : 1;
       });
-    return items.length
-      ? '<div class="ep-filt">' + items.join(" · ") + "，点击放开</div>"
-      : "";
-  }
-
-  // 右栏把命中按文件归组：文件本身命中就当组头，命中的函数挂在下面。
-  // 只按种类分两栏的话，搜函数名右栏一片空白，搜索就白做了。
-  function groupByFile(list) {
-    const order = [];
-    const map = new Map();
-    list.forEach(function (h) {
-      const key = h.module || h.path;
-      let g = map.get(key);
-      if (!g) {
-        g = { key: key, module: h.module, path: h.path, best: h.score, syms: [] };
-        map.set(key, g);
-        order.push(g);
-      }
-      g.best = Math.max(g.best, h.score);
-      if (h.kind === "func" || h.kind === "method" || h.kind === "class") g.syms.push(h);
-    });
-    order.forEach((g) => g.syms.sort((a, b) => a.def_line - b.def_line));
-    order.sort((a, b) => b.best - a.best || a.path.localeCompare(b.path));
-    return order;
-  }
-
-  function groupHead(g) {
-    const collapsed = collapsedFiles.has(g.key);
-    const name = g.path.split("/").pop() || g.path;
-    const hitFile = g.best > 0 && g.syms.length === 0;
-    return (
-      '<div class="ep-grp grp-hit' + (collapsed ? " collapsed" : "") + '" data-grp="' + esc(g.key) + '">' +
-        '<span class="arw">' + (collapsed ? "▸" : "▾") + "</span>" +
-        '<span class="ic">' + ICON_FILE + "</span>" +
-        '<span class="nm">' + esc(name) + (hitFile ? '<span class="hitmark">命中</span>' : "") + "</span>" +
-        '<span class="n">' + (g.syms.length || "") + "</span>" +
-        '<span class="tail" data-open="' + esc(g.module) + '" title="在文件树里展开">' +
-          '<span class="ln">' + esc(g.path.split("/").slice(0, -1).join("/") || ".") + "</span></span>" +
-      "</div>"
-    );
-  }
-
-  function paintHits() {
-    const syms = hits.syms;
-    symHitList.innerHTML = syms.length
-      ? syms.map((h) => hitRow(h)).join("") + suppressedNote("sym", ["func", "method", "class"])
-      : '<div class="ep-empty">没有匹配的符号</div>' +
-        suppressedNote("sym", ["func", "method", "class"]);
-
-    const groups = groupByFile(hits.all);
-    if (!groups.length) {
-      pathHitList.innerHTML = '<div class="ep-empty">没有匹配的文件</div>' +
-        suppressedNote("path", ["file", "mod"]);
-    } else {
-      let html = "";
-      groups.forEach(function (g) {
-        html += groupHead(g);
-        if (collapsedFiles.has(g.key)) return;
-        g.syms.forEach(function (s) {
-          html += hitRow(s, 22);
-        });
+      hits = entries.map(function (e) {
+        const parts = splitId(e.id);
+        return {
+          kind: parts.qualname === "<module>" ? "mod" : "func",
+          module: parts.module,
+          path: "",
+          qualname: parts.qualname,
+          def_line: 0,
+          card_id: e.id,
+          is_entry: true,
+          field: "module",
+          spans: [],
+          score: 0,
+        };
       });
-      pathHitList.innerHTML = html + suppressedNote("path", ["file", "mod"]);
+      paintResults();
+      return;
     }
-    panel.querySelector("#ep-sym-count").textContent = String(syms.length);
-    panel.querySelector("#ep-path-count").textContent = String(groups.length);
-  }
-
-  function paint() {
-    paintFavs();
-    paintRecent();
-    if (qInput.value.trim()) paintHits();
-    else {
-      paintIdleSyms();
-      paintTree();
+    try {
+      const page = await api.invoke("search", { q: "", scope: scope, limit: 500 });
+      hits = page.hits || [];
+    } catch (err) {
+      hits = [];
     }
+    paintResults();
   }
 
-  // 同一时刻只让一个搜索在跑。按键连打时后端要拿索引的锁，排队会让界面
-  // 越来越慢，这里只留住最后一次输入，上一趟回来再发。
+  // 同一时刻只让一个搜索在跑，连打时只发最后一次
   let searchBusy = false;
-  let searchPending = null;
+  let searchPending = false;
 
   async function runSearch() {
     const q = qInput.value.trim();
-    if (!desktop) return;
     if (!q) {
-      hits = { all: [], syms: [], suppressed: [] };
-      paint();
+      await loadBrowse();
+      return;
+    }
+    if (!desktop) {
+      paintResults();
       return;
     }
     if (searchBusy) {
@@ -1901,28 +1774,22 @@
     try {
       const page = await api.invoke("search", {
         q: q,
-        kinds: enabledKinds(),
+        scope: scope,
         limit: 200,
         ctx: activeModule(),
       });
       if (seq === searchSeq) {
-        const list = page.hits || [];
-        hits = {
-          all: list,
-          syms: list.filter((h) => h.kind === "func" || h.kind === "method" || h.kind === "class"),
-          suppressed: page.suppressed || [],
-        };
-        paintHits();
+        hits = page.hits || [];
+        paintResults();
       }
     } catch (err) {
       if (seq === searchSeq) {
-        symHitList.innerHTML = '<div class="ep-empty">' + esc(String(err)) + "</div>";
-        pathHitList.innerHTML = "";
+        oneList.innerHTML = '<div class="ep-empty">' + esc(String(err)) + "</div>";
       }
     } finally {
       searchBusy = false;
       if (searchPending) {
-        searchPending = null;
+        searchPending = false;
         runSearch();
       }
     }
@@ -1931,48 +1798,27 @@
   let searchTimer = null;
   qInput.addEventListener("input", function () {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(runSearch, 200);
+    searchTimer = setTimeout(runSearch, 150);
   });
-
-  async function ensureSymbols(module) {
-    if (symCache.has(module)) return symCache.get(module);
-    let rows = [];
-    try {
-      rows = await api.invoke("symbols_in", { module: module });
-    } catch (err) {
-      rows = [];
-    }
-    symCache.set(module, rows);
-    return rows;
-  }
 
   async function openEntryPanel() {
     if (panelOpen) return;
     panelOpen = true;
     panel.hidden = false;
     rootBtn.classList.add("open");
-    syncBoxes();
     if (desktop && currentPath) {
       try {
         rootData = await api.invoke("roots", { project: currentPath, action: "get" });
       } catch (err) {
         rootData = { favorites: [], recent: [] };
       }
-      if (!fileCache) {
-        try {
-          fileCache = await api.invoke("files");
-        } catch (err) {
-          fileCache = [];
-        }
-        fileByModule = new Map();
-        (fileCache || []).forEach((f) => fileByModule.set(f.module, f));
-      }
-    } else {
-      fileCache = [];
     }
-    paint();
+    paintFavs();
+    syncScope();
+    await runSearch();
     updateMarked();
     qInput.focus();
+    qInput.select();
   }
 
   function closeEntryPanel() {
@@ -2002,31 +1848,11 @@
     } catch (err) {
       return;
     }
-    paint();
+    paintFavs();
+    paintResults();
     updateMarked();
     window.__clewRootChanged(window.getActiveRoot ? window.getActiveRoot() : null);
     if (window.__clewRefreshCard) window.__clewRefreshCard(id);
-  }
-
-  // 从搜索结果点开文件：清掉查询，在文件树里展开那一行
-  async function revealFile(module) {
-    const row = fileByModule.get(module);
-    qInput.value = "";
-    hits = { all: [], syms: [], suppressed: [] };
-    if (row) {
-      const parts = (row.path || "").split("/");
-      parts.pop();
-      let prefix = "";
-      parts.forEach((p) => {
-        prefix = prefix ? prefix + "/" + p : p;
-        openDirs.add(prefix);
-      });
-      openFiles.add(module);
-      await ensureSymbols(module);
-    }
-    paint();
-    const el = pathHitList.querySelector('[data-file="' + module.replace(/"/g, '\\"') + '"]');
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: "center" });
   }
 
   // 卡片头上的旗标按钮走这两个口
@@ -2042,12 +1868,12 @@
   };
 
   panel.addEventListener("click", async function (e) {
-    const more = e.target.closest("[data-allow]");
-    if (more) {
-      kinds[more.dataset.allow] = true;
-      saveKinds();
-      syncBoxes();
-      runSearch();
+    const scopeBtn = e.target.closest("[data-scope]");
+    if (scopeBtn) {
+      scope = scopeBtn.dataset.scope === "all" ? "all" : "entry";
+      saveScope();
+      syncScope();
+      await runSearch();
       return;
     }
     const fav = e.target.closest("[data-fav]");
@@ -2057,77 +1883,14 @@
       return;
     }
     const root = e.target.closest("[data-root]");
-    if (root) {
-      await chooseRoot(root.dataset.root);
-      return;
-    }
-    const open = e.target.closest("[data-open]");
-    if (open) {
-      await revealFile(open.dataset.open);
-      return;
-    }
-    const grp = e.target.closest("[data-grp]");
-    if (grp) {
-      const k = grp.dataset.grp;
-      collapsedFiles.has(k) ? collapsedFiles.delete(k) : collapsedFiles.add(k);
-      paintHits();
-      return;
-    }
-    const group = e.target.closest("[data-group]");
-    if (group) {
-      const g = group.dataset.group;
-      const wasOpen = openGroups.has(g);
-      openGroups.clear();
-      if (!wasOpen) openGroups.add(g);
-      paintIdleSyms();
-      return;
-    }
-    const file = e.target.closest("[data-file]");
-    if (file) {
-      const module = file.dataset.file;
-      if (openFiles.has(module)) {
-        openFiles.delete(module);
-      } else {
-        openFiles.add(module);
-        await ensureSymbols(module);
-      }
-      paintTree();
-      return;
-    }
-    const dir = e.target.closest("[data-dir]");
-    if (dir) {
-      const p = dir.dataset.dir;
-      openDirs.has(p) ? openDirs.delete(p) : openDirs.add(p);
-      paintTree();
-    }
+    if (root) await chooseRoot(root.dataset.root);
   });
 
   qInput.addEventListener("keydown", function (e) {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    const first = symHitList.querySelector("[data-root]");
+    const first = oneList.querySelector("[data-root]");
     if (first) chooseRoot(first.dataset.root);
-  });
-
-  kindBoxes.forEach(function (box) {
-    box.addEventListener("change", function () {
-      kinds[box.dataset.kind] = box.checked;
-      saveKinds();
-      runSearch();
-    });
-  });
-
-  // Ctrl+1..5 切换种类，手不用离开键盘
-  document.addEventListener("keydown", function (e) {
-    if (!panelOpen || !(e.ctrlKey || e.metaKey)) return;
-    const n = parseInt(e.key, 10);
-    if (!n || n < 1 || n > KIND_LABELS.length) return;
-    e.preventDefault();
-    const k = KIND_LABELS[n - 1][0];
-    kinds[k] = !kinds[k];
-    saveKinds();
-    syncBoxes();
-    runSearch();
   });
 
   rootBtn.addEventListener("click", function () {
@@ -2148,18 +1911,27 @@
 
   // app.js 在切根和打开根之后回调这里，顶栏按钮跟着变
   window.__clewRootChanged = function (rootId) {
-    document.getElementById("root-name").textContent = rootId || "未选择入口";
-    document.getElementById("root-name").title = rootId || "";
+    // 顶部那颗「当前入口」按钮显示的是卡片 id，模块级入口要写成 __main__
+    const label = rootId ? showId(rootId) : "";
+    document.getElementById("root-name").textContent = label || "未选择入口";
+    document.getElementById("root-name").title = label;
     const star = document.getElementById("root-star");
     star.classList.toggle("on", !!rootId && rootData.favorites.indexOf(rootId) >= 0);
   };
+  // 打开不算「用过」：预览时一口气点开十几个函数，全记进去就没意义了。
+  // 只有用户在卡片上真的点过东西，app.js 才会喊这里（见 __clewCardUsed）。
   window.__clewRootOpened = function (rootId) {
     if (!desktop || !currentPath || !rootId) return;
-    api.invoke("roots", { project: currentPath, action: "recent", cardId: rootId })
+    window.__clewRootChanged(rootId);
+  };
+
+  window.__clewCardUsed = function (id) {
+    if (!desktop || !currentPath || !id) return;
+    api.invoke("roots", { project: currentPath, action: "recent", cardId: id })
       .then(function (data) {
         rootData = data;
-        window.__clewRootChanged(rootId);
         updateMarked();
+        if (spView === "recent") spRender();
       })
       .catch(function () {});
   };
@@ -2181,31 +1953,969 @@
 
   // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
   // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
+  // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
+  // 调试口：浏览器预览里没有后端，用它注入假数据验证渲染
   window.__clewPanel = {
     open: openEntryPanel,
     close: closeEntryPanel,
-    paint: paint,
     search: runSearch,
-    setFiles: function (rows) {
-      fileCache = rows || [];
-      fileByModule = new Map();
-      fileCache.forEach(function (f) { fileByModule.set(f.module, f); });
-      symCache = new Map();
-    },
     setRoots: function (d) {
       rootData = d || { favorites: [], recent: [] };
+      paintFavs();
+        updateMarked();
     },
     setHits: function (page) {
-      const list = (page && page.hits) || [];
-      hits = {
-        all: list,
-        syms: list.filter((h) => h.kind === "func" || h.kind === "method" || h.kind === "class"),
-        suppressed: (page && page.suppressed) || [],
-      };
-      paintHits();
+      hits = (page && page.hits) || [];
+      paintResults();
     },
-    inputs: { q: qInput, kinds: kinds },
+    inputs: { q: qInput },
   };
+
+  // ── 侧边栏：符号树 ──────────────────────────────────────────────
+  // 仿 PyCharm：最左边一条活动栏，右边一块面板。面板顶部是视图下拉，
+  // 全部函数 / 入口函数 / 收藏夹。入口函数是扫描器自己认出来的，
+  // 收藏夹是用户按 ★ 收起来的内容。搜索不在这里，它在独立的入口面板里。
+  //
+  // 渲染只画展开的那几层：文件默认收起，所以一个项目几千个定义也只有几百行
+  // DOM。展开时按帧分批补，一次 append 两百行，长文件也不会卡住。
+  const sideStyle = document.createElement("style");
+  sideStyle.textContent = `
+    /* 侧栏是标题栏下面最左的一整列：上沿接品牌行（44px）下沿，一直到底。
+       面包屑那一行属于内容区，侧栏开着的时候它从侧栏右边界开始，不横穿。 */
+    #side-rail{position:fixed;left:0;top:44px;bottom:0;width:40px;background:#1e1f22;
+      border-right:1px solid #2b2d30;display:flex;flex-direction:column;align-items:center;
+      padding-top:6px;gap:2px;z-index:42}
+    .rail-btn{width:30px;height:30px;display:grid;place-items:center;background:none;
+      border:none;border-radius:4px;color:#8f939b;cursor:pointer}
+    .rail-btn svg{position:static;inset:auto;display:block;width:15px;height:15px}
+    .rail-btn:hover{background:#2b2d30;color:#dfe1e5}
+    .rail-btn.on{background:#2e436e;color:#e8edf7}
+
+    /* 侧栏宽度可拖：所有跟着它让位的东西都读 --side-w，别各写各的数字 */
+    :root{--side-w:272px}
+    #side-panel{position:fixed;left:40px;top:44px;bottom:0;width:var(--side-w);background:#1e1f22;
+      border-right:1px solid #2b2d30;display:flex;flex-direction:column;z-index:42;
+      font:12px/1.5 "Segoe UI",system-ui,sans-serif;color:#dfe1e5}
+    #side-panel[hidden]{display:none}
+    body.welcome-open #side-rail,body.welcome-open #side-panel{display:none}
+    body.side-open #tb-row2{margin-left:calc(40px + var(--side-w))}
+    body.side-open #graph{inset:78px 0 0 calc(40px + var(--side-w))!important}
+    body.side-open #focus{inset:78px 0 0 calc(40px + var(--side-w))!important}
+    body.side-open #hint{left:calc(40px + var(--side-w) + 16px)}
+    /* 欢迎页没有活动栏，铺满 */
+    body.welcome-open #graph{inset:44px 0 0 0!important}
+    body.welcome-open #focus{inset:44px 0 0 0!important}
+
+    /* 右边那条可拖的分界线：只做命中区，不画出来，靠光标告诉你能拖 */
+    #side-resize{position:absolute;top:0;right:-3px;bottom:0;width:6px;cursor:col-resize;
+      z-index:6;background:none}
+    body.side-resizing{cursor:col-resize}
+    body.side-resizing *{user-select:none!important}
+
+    /* 面板顶格：视图下拉就在面板里，第一行是它，下面紧接着树 */
+    /* 这一栏是面板自己的头部，跟面板同色成一个整体；右边面包屑那条另算 */
+    .sp-head{display:flex;align-items:center;height:34px;padding:0 4px;flex:none;
+      border-bottom:1px solid #2b2d30;background:#1e1f22}
+    .sp-view{display:flex;align-items:center;gap:5px;height:26px;flex:none;
+      background:transparent;border:none;border-radius:4px;color:#dfe1e5;
+      font:inherit;font-size:12.5px;padding:0 8px;cursor:pointer}
+    .sp-view:hover,.sp-view.open{background:#2b2d30}
+    .sp-view svg{position:static;inset:auto;display:block;width:11px;height:11px;
+      color:#8f939b}
+    .sp-list{flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 0}
+    /* 滚动条：细、圆、半透明，跟面板一个色系；不要系统默认那条亮灰的。
+       scrollbar-width 会盖掉 ::-webkit-scrollbar 的样式，所以这里不写它。 */
+    .sp-list::-webkit-scrollbar{width:10px;height:10px}
+    .sp-list::-webkit-scrollbar-track{background:transparent}
+    .sp-list::-webkit-scrollbar-thumb{background:#333a43;border-radius:5px;
+      border:2px solid transparent;background-clip:padding-box}
+    .sp-list::-webkit-scrollbar-thumb:hover{background:#4a525d;border:2px solid transparent;
+      background-clip:padding-box}
+    .sp-list::-webkit-scrollbar-corner{background:transparent}
+    .sp-row{display:flex;align-items:center;gap:5px;height:24px;padding-right:6px;
+      white-space:nowrap;cursor:pointer;color:#c9cdd3;font-size:13px}
+    .sp-row:hover{background:#2b2d30}
+    .sp-row.sel{background:#2e436e;color:#e8edf7}
+    .sp-row.third{color:#6f737a}
+    .sp-row .caret{width:13px;flex:none;display:flex;align-items:center;
+      justify-content:center;color:#8f939b}
+    .sp-row .caret svg{position:static;inset:auto;display:block;width:13px;height:13px}
+    .sp-row .ic{width:13px;flex:none;color:#8f939b;font-size:11px;text-align:center;
+      display:flex;align-items:center;justify-content:center}
+    .sp-row .fname{color:#8f939b;flex:1 1 auto;min-width:0;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
+    .sp-row .fsep{color:#4b5563;font-size:11px;flex:none}
+    /* 放不下时先截文件名，函数名要保证完整可见 */
+    .sp-row .nm.fn{flex:none}
+    /* 入口底下那行文件名：当注释看，小一号、更暗、靠右不抢戏 */
+    /* 文件名注释行和上面那行函数是一组：hover、选中、点击都算在一起 */
+    .sp-row.note{height:16px;padding-bottom:6px;font-size:11.5px;color:#6f737a}
+    .sp-row:hover + .sp-row.note,
+    .sp-row.note:hover,
+    .sp-row:has(+ .sp-row.note:hover){background:#2b2d30}
+    .sp-row.sel + .sp-row.note{background:#2e436e;color:#c9cdd3}
+    /* 注释行就是一条路径字符串，一种颜色；放不下就尾部省略 */
+    .sp-row.note .note-file{color:#6f737a;flex:0 1 auto;min-width:0;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
+    .sp-row .ic svg{position:static;inset:auto;display:block;width:13px;height:13px}
+    .sp-row .nm{overflow:hidden;text-overflow:ellipsis}
+    .sp-row .mod{color:#6f737a;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;
+      max-width:90px;flex:none}
+    .sp-row .tail{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
+    .sp-row .edot{width:4px;height:4px;border-radius:50%;background:var(--acc);flex:none}
+    .sp-row .flag{width:12px;height:12px;display:none;color:#6f737a}
+    .sp-row:hover .flag,.sp-row .flag.on{display:flex;align-items:center}
+    .sp-row .flag.on{color:var(--sel)}
+    .sp-row .flag svg path{fill:none}
+    .sp-row .flag.on svg path{fill:currentColor}
+    /* 卡片头那颗星：同一形状、同一填充规则 */
+    .head .btn.pin svg path{fill:none}
+    .head .btn.pin.on svg path{fill:currentColor}
+    .sp-row .flag:hover{color:#dfe1e5}
+    .sp-empty{color:#6f737a;padding:10px 12px;font-size:12.5px;line-height:1.6}
+
+    /* 视图下拉跟面板同色，弹出来像是面板延伸出去的一块 */
+    #sp-menu{min-width:150px;background:#1e1f22;border-color:#2b2d30;
+      box-shadow:0 12px 26px #000000a6}
+  `;
+  document.head.appendChild(sideStyle);
+
+  const SP_VIEWS = [
+    { id: "all", label: "全部函数" },
+    { id: "entry", label: "入口函数" },
+    { id: "fav", label: "收藏夹" },
+    { id: "recent", label: "最近使用" },
+  ];
+  const SP_VIEW_KEY = "clew.sideView";
+  let spView = "all";
+  try {
+    const saved = localStorage.getItem(SP_VIEW_KEY);
+    if (SP_VIEWS.some((v) => v.id === saved)) spView = saved;
+  } catch (err) {
+    /* 读不出来就用默认 */
+  }
+
+  // 侧栏的数据按需取：先只有文件行，展开哪个文件才问哪个文件的定义。
+  // 一上来就把整棵树拉过来的话，标准库那种规模是七十万个符号、上百兆 JSON，
+  // 面板还没画出来就先卡住了。
+  let spFiles = null; // [{module, path, is_third_party, has_main_guard, symbols}]
+  let spFileByModule = new Map();
+  let spEntrySyms = null; // 入口视图：全项目入口定义，通常几十条
+  let spLoadedFor = null; // 这份数据属于哪个项目
+  let spSeq = 0; // 渲染令牌，连点展开时只让最后一次往上画
+  const spCache = new Map(); // module -> 该文件的定义
+  // 三个视图各留一套展开状态：在「全部函数」里翻到的位置，切到「入口函数」
+  // 再切回来还在。默认值按视图量级定，全部函数全收起，另外两个全展开。
+  function spBlank() {
+    return { dirs: new Set(), files: new Set(), syms: new Set() };
+  }
+  const spStates = {
+    all: spBlank(),
+    entry: spBlank(),
+    fav: spBlank(),
+    recent: spBlank(),
+  };
+  let spTree = null; // 当前视图的目录树，展开时就地取子节点
+
+  function st() {
+    return spStates[spView] || spStates.all;
+  }
+
+  const rail = document.createElement("div");
+  rail.id = "side-rail";
+  rail.innerHTML =
+    '<button type="button" class="rail-btn on" title="符号树">' + ICON.folder + "</button>";
+  document.body.appendChild(rail);
+
+  const side = document.createElement("div");
+  side.id = "side-panel";
+  side.hidden = true;
+  side.innerHTML =
+    '<div class="sp-head">' +
+      '<button type="button" class="sp-view" id="sp-view-btn">' +
+        '<span id="sp-view-label"></span>' + ICON.chevronDown +
+      "</button>" +
+    "</div>" +
+    '<div class="sp-list" id="sp-list"></div>';
+  document.body.appendChild(side);
+
+  const spViewBtn = side.querySelector("#sp-view-btn");
+  const spViewLabel = side.querySelector("#sp-view-label");
+  const spList = side.querySelector("#sp-list");
+
+  // ── 侧栏宽度可拖 ────────────────────────────────────────────────
+  // 宽度只写进 --side-w，画布、面包屑行、底部提示都跟着这个变量走。
+  // 拖的时候只在 rAF 里通知一次画布重排，不然每移动 1px 就重算一遍卡片。
+  const SIDE_W_KEY = "clew.sideWidth";
+  const SIDE_W_MIN = 200;
+  const resizer = document.createElement("div");
+  resizer.id = "side-resize";
+  side.appendChild(resizer);
+
+  let sideWidth = 272;
+  try {
+    const saved = Number(localStorage.getItem(SIDE_W_KEY));
+    if (saved >= SIDE_W_MIN) sideWidth = saved;
+  } catch (err) {
+    /* 读不出来就用默认 */
+  }
+
+  function clampWidth(px) {
+    const max = Math.max(SIDE_W_MIN + 40, Math.round(window.innerWidth * 0.6));
+    return Math.max(SIDE_W_MIN, Math.min(Math.round(px), max));
+  }
+
+  let relayoutQueued = false;
+  function queueRelayout() {
+    if (relayoutQueued) return;
+    relayoutQueued = true;
+    requestAnimationFrame(function () {
+      relayoutQueued = false;
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+
+  function applyWidth(px, save) {
+    sideWidth = clampWidth(px);
+    document.documentElement.style.setProperty("--side-w", sideWidth + "px");
+    if (save) {
+      try {
+        localStorage.setItem(SIDE_W_KEY, String(sideWidth));
+      } catch (err) {
+        /* 隐私模式写不进就算了 */
+      }
+    }
+    queueRelayout();
+  }
+  applyWidth(sideWidth, false);
+
+  resizer.addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    resizer.classList.add("dragging");
+    document.body.classList.add("side-resizing");
+  });
+  resizer.addEventListener("pointermove", function (e) {
+    if (!resizer.classList.contains("dragging")) return;
+    // 面板左边界固定在活动栏右侧，宽度就是指针横坐标减掉这一段
+    applyWidth(e.clientX - 40, false);
+  });
+  function endDrag(e) {
+    if (!resizer.classList.contains("dragging")) return;
+    resizer.classList.remove("dragging");
+    document.body.classList.remove("side-resizing");
+    try {
+      resizer.releasePointerCapture(e.pointerId);
+    } catch (err) {
+      /* 指针已经释放了 */
+    }
+    applyWidth(sideWidth, true);
+  }
+  resizer.addEventListener("pointerup", endDrag);
+  resizer.addEventListener("pointercancel", endDrag);
+
+  const spMenu = document.createElement("div");
+  spMenu.className = "tb-pop";
+  spMenu.id = "sp-menu";
+  spMenu.hidden = true;
+  document.body.appendChild(spMenu);
+
+  let sideOpen = false;
+
+  function viewLabel(id) {
+    const v = SP_VIEWS.filter((x) => x.id === id)[0];
+    return v ? v.label : SP_VIEWS[0].label;
+  }
+
+  function syncViewLabel() {
+    spViewLabel.textContent = viewLabel(spView);
+  }
+
+  function closeSpMenu() {
+    spMenu.hidden = true;
+    spViewBtn.classList.remove("open");
+  }
+
+  function openSpMenu() {
+    spMenu.innerHTML = "";
+    SP_VIEWS.forEach(function (v) {
+      const b = document.createElement("button");
+      b.textContent = v.label;
+      b.onclick = function () {
+        closeSpMenu();
+        setView(v.id);
+      };
+      spMenu.appendChild(b);
+    });
+    const r = spViewBtn.getBoundingClientRect();
+    spMenu.style.left = Math.round(r.left) + "px";
+    spMenu.style.top = Math.round(r.bottom + 4) + "px";
+    spMenu.hidden = false;
+    spViewBtn.classList.add("open");
+  }
+
+  spViewBtn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    spMenu.hidden ? openSpMenu() : closeSpMenu();
+  });
+  document.addEventListener("mousedown", function (e) {
+    if (!spMenu.hidden && !spMenu.contains(e.target) && !spViewBtn.contains(e.target)) {
+      closeSpMenu();
+    }
+  });
+
+  function setView(id) {
+    spView = id;
+    try {
+      localStorage.setItem(SP_VIEW_KEY, id);
+    } catch (err) {
+      /* 隐私模式写不进就算了 */
+    }
+    syncViewLabel();
+    spRender();
+  }
+
+  // 文件节点、类节点都是就地展开，所以节点里要能查到自己的定义
+  async function ensureSyms(module) {
+    if (spCache.has(module)) return spCache.get(module);
+    if (!desktop) return [];
+    try {
+      const rows = await api.invoke("symbols_in", { module: module });
+      spCache.set(module, rows || []);
+    } catch (err) {
+      if (window.__clewLog) window.__clewLog("symbols_in " + module + " 失败：" + err);
+      spCache.set(module, []);
+    }
+    return spCache.get(module);
+  }
+
+  async function ensureEntry() {
+    if (spEntrySyms) return spEntrySyms;
+    if (!desktop) return [];
+    try {
+      spEntrySyms = (await api.invoke("entry_symbols")) || [];
+    } catch (err) {
+      spEntrySyms = [];
+    }
+    return spEntrySyms;
+  }
+
+  // 入口视图也默认收起目录：先只看到顶层目录，点哪层看哪层。
+  // （之前是切过来就把所有目录摊开，行数一多反而没法扫。）
+
+  // 一个文件里的定义按点号嵌套：Class.method 挂在 Class 底下
+  function nestSyms(syms) {
+    const byQ = Object.create(null);
+    syms.forEach(function (s) {
+      byQ[s.qualname] = { sym: s, kids: [] };
+    });
+    const tops = [];
+    syms.forEach(function (s) {
+      const node = byQ[s.qualname];
+      const dot = s.qualname.lastIndexOf(".");
+      const parent = dot > 0 ? byQ[s.qualname.slice(0, dot)] : null;
+      if (parent && parent !== node) parent.kids.push(node);
+      else tops.push(node);
+    });
+    return { tops: tops, byQ: byQ };
+  }
+
+  function emitNode(rows, node, d) {
+    const s = node.sym;
+    const open = st().syms.has(s.card_id);
+    rows.push({
+      kind: "sym",
+      depth: d,
+      card: s.card_id,
+      module: s.module,
+      qual: s.qualname,
+      kindName: s.kind,
+      kids: node.kids.length,
+      open: open,
+      isEntry: !!s.is_entry,
+      line: s.def_line || 0,
+    });
+    if (open) node.kids.forEach((k) => emitNode(rows, k, d + 1));
+  }
+
+  function pushNested(rows, module, syms, depth) {
+    const nested = nestSyms(syms);
+    nested.tops.forEach((n) => emitNode(rows, n, depth));
+  }
+
+  // ── 目录树 ──────────────────────────────────────────────────────
+  // 树上三层：文件夹 → 文件 → 定义。文件夹按相对路径切出来，文件挂在
+  // 它所在的目录下，函数和类仍然按点号嵌套在文件里。
+  function buildDirTree(items) {
+    const root = { name: "", dirs: new Map(), files: [] };
+    items.forEach(function (it) {
+      const path = it.path || it.module;
+      const parts = path.split("/");
+      let node = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const name = parts[i];
+        if (!node.dirs.has(name)) {
+          node.dirs.set(name, { name: name, dirs: new Map(), files: [] });
+        }
+        node = node.dirs.get(name);
+      }
+      node.files.push({
+        module: it.module,
+        path: path,
+        third: !!it.third,
+        symbols: it.symbols || [],
+      });
+    });
+    // 目录一个都不展开的话，进来的第一眼只是一排文件夹，看不到函数
+    const nodes = new Map();
+    (function walk(node, prefix) {
+      nodes.set(prefix, node);
+      node.dirs.forEach(function (child, name) {
+        walk(child, prefix ? prefix + "/" + name : name);
+      });
+    })(root, "");
+    return { root: root, nodes: nodes };
+  }
+
+  function emitDir(node, prefix, depth, rows) {
+    const names = Array.from(node.dirs.keys()).sort(function (a, b) {
+      return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
+    });
+    names.forEach(function (name) {
+      const child = node.dirs.get(name);
+      const key = prefix ? prefix + "/" + name : name;
+      const open = st().dirs.has(key);
+      rows.push({ kind: "dir", depth: depth, dir: key, name: name, open: open });
+      if (open) emitDir(child, key, depth + 1, rows);
+    });
+    node.files
+      .slice()
+      .sort(function (a, b) {
+        const x = basename(a.path).toLowerCase();
+        const y = basename(b.path).toLowerCase();
+        return x < y ? -1 : x > y ? 1 : 0;
+      })
+      .forEach(function (f) {
+        // 入口视图不再有文件这一层：一行函数名，下面一行小字是文件名（当注释看）
+        if (spView === "entry") {
+          f.symbols.forEach(function (s) {
+            rows.push({
+              kind: "entry",
+              depth: depth,
+              card: s.card_id,
+              module: f.module,
+              qual: s.qualname,
+              file: basename(f.path),
+              line: s.def_line || 0,
+            });
+            rows.push({
+              kind: "note",
+              depth: depth,
+              card: s.card_id,
+              file: basename(f.path),
+            });
+          });
+          return;
+        }
+        const open = st().files.has(f.module);
+        rows.push({
+          kind: "file",
+          depth: depth,
+          module: f.module,
+          path: f.path,
+          third: f.third,
+          open: open,
+        });
+        if (open) pushNested(rows, f.module, f.symbols, depth + 1);
+      });
+  }
+
+  function collectItems() {
+    const items = [];
+    if (spView === "entry") {
+      const byModule = new Map();
+      (spEntrySyms || []).forEach(function (s) {
+        if (!byModule.has(s.module)) byModule.set(s.module, []);
+        byModule.get(s.module).push(s);
+      });
+      byModule.forEach(function (syms, module) {
+        const f = spFileByModule.get(module);
+        items.push({
+          module: module,
+          path: (f && f.path) || module.replace(/\./g, "/") + ".py",
+          third: !!(f && f.is_third_party),
+          symbols: syms,
+        });
+      });
+      return items;
+    }
+    (spFiles || []).forEach(function (f) {
+      // 一条定义都没有的文件不进函数树
+      if (!f.symbols) return;
+      items.push({
+        module: f.module,
+        path: f.path || f.module,
+        third: !!f.is_third_party,
+        symbols: spCache.get(f.module) || [],
+      });
+    });
+    return items;
+  }
+
+  function collectRows() {
+    const rows = [];
+    if (spView === "fav" || spView === "recent") {
+      const ids = spView === "fav" ? rootData.favorites || [] : rootData.recent || [];
+      ids.forEach(function (id) {
+        const p = splitId(id);
+        const f = spFileByModule.get(p.module);
+        const path = (f && f.path) || p.module.replace(/\./g, "/") + ".py";
+        rows.push({
+          kind: "entry",
+          depth: 0,
+          card: id,
+          module: p.module,
+          qual: p.qualname,
+          file: basename(path),
+          line: 0,
+        });
+        // 平铺视图没有目录树给上下文，注释行直接显示整条相对路径
+        rows.push({ kind: "note", depth: 0, card: id, file: path });
+      });
+      return rows;
+    }
+    spTree = buildDirTree(collectItems());
+    emitDir(spTree.root, "", 0, rows);
+    return rows;
+  }
+
+  // 展开与收起用统一的图标这套（同一 viewBox、1.5 线宽、currentColor），
+  // 只写一个字形的话放大缩小都对不齐别的图标
+  const CARET_SHUT = ICON.chevronRight;
+  const CARET_OPEN = ICON.chevronDown;
+
+  function spRowEl(r) {
+    const el = document.createElement("div");
+    el.className =
+      "sp-row" + (r.kind === "note" ? " note" : "") + (r.third ? " third" : "");
+    el.style.paddingLeft = 6 + r.depth * 11 + "px";
+    el.dataset.depth = String(r.depth);
+    if (r.kind === "dir") {
+      el.dataset.dir = r.dir;
+      el.title = r.dir;
+      el.innerHTML =
+        '<span class="caret" data-act="caret">' + (r.open ? CARET_OPEN : CARET_SHUT) + "</span>" +
+        '<span class="ic">' + ICON.folder + "</span>" +
+        '<span class="nm">' + esc(r.name) + "</span>";
+      return el;
+    }
+    if (r.kind === "file") {
+      el.dataset.mod = r.module;
+      el.title = r.path;
+      el.innerHTML =
+        '<span class="caret" data-act="caret">' + (r.open ? CARET_OPEN : CARET_SHUT) + "</span>" +
+        '<span class="nm">' + esc(basename(r.path)) + "</span>";
+      return el;
+    }
+
+    const active = window.getActiveRoot ? window.getActiveRoot() : null;
+    if (active && active === r.card) el.classList.add("sel");
+    const star = (rootData.favorites || []).indexOf(r.card) >= 0;
+    const flagHtml =
+      '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(r.card) +
+      '" title="标记入口">' + FLAG_SVG + "</span>";
+
+    // 一行函数名，一行文件名当注释：一行硬塞两个名字在窄面板里必然被截断
+    if (r.kind === "entry") {
+      el.dataset.card = r.card;
+      el.dataset.module = r.module || "";
+      el.title = r.file + ":" + showQual(r.qual);
+      el.innerHTML =
+        '<span class="caret"></span>' +
+        '<span class="ic">\u0192</span>' +
+        '<span class="nm fn">' + esc(shortName(r.card)) + "</span>" +
+        '<span class="tail">' + flagHtml + "</span>";
+      return el;
+    }
+    if (r.kind === "note") {
+      // 文件名行缩进到函数名文字那一列：caret 10 + 间隙 5 + 图标 11 + 间隙 5
+      // 点它跟点上面那行函数一样，打开同一个符号
+      el.style.paddingLeft = 6 + r.depth * 11 + 31 + "px";
+      el.dataset.card = r.card;
+      el.innerHTML = '<span class="note-file">' + esc(r.file) + "</span>";
+      return el;
+    }
+
+    const caret = r.kids
+      ? '<span class="caret" data-act="caret">' + (r.open ? CARET_OPEN : CARET_SHUT) + "</span>"
+      : '<span class="caret"></span>';
+    const ic = r.kindName === "class" ? "C" : r.kindName === "method" ? "M" : "\u0192";
+    el.dataset.card = r.card;
+    el.dataset.module = r.module || "";
+    el.title = r.module + ":" + showQual(r.qual || "");
+    el.innerHTML =
+      caret +
+      '<span class="ic">' + ic + "</span>" +
+      '<span class="nm">' + esc(shortName(r.card)) + "</span>" +
+      (r.isEntry ? '<span class="edot" title="自动识别的入口"></span>' : "") +
+      '<span class="tail">' +
+        (r.showModule ? '<span class="mod">' + esc(r.module) + "</span>" : "") +
+        flagHtml +
+      "</span>";
+    return el;
+  }
+
+  // 行数可能到几万（索引了整个标准库那种），一屏只画需要的那几张，
+  // 滚到底再补下一批：DOM 数量跟着视口走，不跟着数据量走。
+  const SP_PAGE = 200;
+  let spRows = [];
+  let spDrawn = 0;
+
+  function drawMore() {
+    if (spDrawn >= spRows.length) return;
+    const end = Math.min(spDrawn + SP_PAGE, spRows.length);
+    const frag = document.createDocumentFragment();
+    for (; spDrawn < end; spDrawn++) frag.appendChild(spRowEl(spRows[spDrawn]));
+    spList.appendChild(frag);
+  }
+
+  spList.addEventListener("scroll", function () {
+    if (spList.scrollTop + spList.clientHeight >= spList.scrollHeight - 400) drawMore();
+  });
+
+  async function spRender() {
+    if (!sideOpen) return;
+    const token = ++spSeq;
+    if (spView === "entry") await ensureEntry();
+    if (token !== spSeq) return;
+    const rows = collectRows();
+    spList.innerHTML = "";
+    spRows = rows;
+    spDrawn = 0;
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "sp-empty";
+      empty.textContent =
+        spView === "fav"
+          ? "给定义按 ★ 就会出现在这里"
+          : spView === "recent"
+            ? "在卡片里操作过的函数会排在这里"
+          : spView === "entry"
+            ? "扫描器没有找到入口"
+            : "没有定义";
+      spList.appendChild(empty);
+      return;
+    }
+    drawMore();
+  }
+
+  // 展开收起就地增删那几行，不重画整棵树：一个文件几百行定义时，
+  // 每点一次都重建全部 DOM 会把展开变成肉眼可见的卡顿。
+  function dropChildren(rowEl, keepDepth) {
+    let n = rowEl.nextElementSibling;
+    while (n && Number(n.dataset.depth) > keepDepth) {
+      const next = n.nextElementSibling;
+      n.remove();
+      n = next;
+    }
+  }
+
+  // 插入也分批：一个大目录里可能有好几百个文件，一次 append 完会让点击
+  // 到画面更新之间空一拍。每帧补一批，插完为止。
+  function appendRows(anchor, rows) {
+    let i = 0;
+    let last = anchor;
+    function step() {
+      // 锚点被移除（视图切了、父节点收起了）就停下来，别往野节点里塞
+      if (!last.isConnected) return;
+      const frag = document.createDocumentFragment();
+      const end = Math.min(i + SP_PAGE, rows.length);
+      for (; i < end; i++) frag.appendChild(spRowEl(rows[i]));
+      const tail = frag.lastChild;
+      last.after(frag);
+      last = tail;
+      if (i < rows.length) requestAnimationFrame(step);
+    }
+    step();
+  }
+
+  function toggleDir(key) {
+    const mine = st();
+    const wasOpen = mine.dirs.has(key);
+    if (wasOpen) mine.dirs.delete(key);
+    else mine.dirs.add(key);
+    const el = spList.querySelector('[data-dir="' + key + '"]');
+    if (!el || !spTree || !spTree.nodes.has(key)) {
+      spRender();
+      return;
+    }
+    const depth = Number(el.dataset.depth);
+    dropChildren(el, depth);
+    el.querySelector('[data-act="caret"]').innerHTML = wasOpen
+      ? CARET_SHUT
+      : CARET_OPEN;
+    if (wasOpen) return;
+    const rows = [];
+    emitDir(spTree.nodes.get(key), key, depth + 1, rows);
+    appendRows(el, rows);
+  }
+
+  // 取定义是异步的，展开期间再点同一条就等它插完再说，否则上一次的回包
+  // 会把已经收起的行又塞回来
+  const spBusy = new Set();
+
+  async function toggleFile(module) {
+    if (spBusy.has(module)) return;
+    const mine = st();
+    const wasOpen = mine.files.has(module);
+    if (wasOpen) mine.files.delete(module);
+    else mine.files.add(module);
+    const el = spList.querySelector('[data-mod="' + module + '"]');
+    if (!el) {
+      spRender();
+      return;
+    }
+    const depth = Number(el.dataset.depth);
+    dropChildren(el, depth);
+    el.querySelector('[data-act="caret"]').innerHTML = wasOpen
+      ? CARET_SHUT
+      : CARET_OPEN;
+    if (wasOpen) return;
+
+    spBusy.add(module);
+    try {
+      const syms = spView === "entry" && spEntrySyms
+        ? spEntrySyms.filter((s) => s.module === module)
+        : await ensureSyms(module);
+      // 取数期间可能已经点了别处、重渲染过，甚至又点了这一行
+      if (!mine.files.has(module)) return;
+      const host = spList.querySelector('[data-mod="' + module + '"]');
+      if (!host) return;
+      const rows = [];
+      pushNested(rows, module, syms || [], Number(host.dataset.depth) + 1);
+      appendRows(host, rows);
+    } finally {
+      spBusy.delete(module);
+    }
+  }
+
+  function toggleSym(card) {
+    const mine = st();
+    const wasOpen = mine.syms.has(card);
+    if (wasOpen) mine.syms.delete(card);
+    else mine.syms.add(card);
+    const el = spList.querySelector('[data-card="' + card + '"]');
+    if (!el) {
+      spRender();
+      return;
+    }
+    const depth = Number(el.dataset.depth);
+    dropChildren(el, depth);
+    el.querySelector('[data-act="caret"]').innerHTML = wasOpen
+      ? CARET_SHUT
+      : CARET_OPEN;
+    if (wasOpen) return;
+    // 只把这条定义自己的下一层挂上去；拿整份文件重算再截取的话，
+    // 末尾会把它的兄弟节点一起塞进来
+    const module = el.dataset.module || "";
+    const qual = splitId(card).qualname;
+    const syms =
+      spView === "entry" && spEntrySyms
+        ? spEntrySyms.filter((s) => s.module === module)
+        : spCache.get(module) || [];
+    const node = nestSyms(syms).byQ[qual];
+    if (!node) return;
+    const rows = [];
+    node.kids.forEach((k) => emitNode(rows, k, depth + 1));
+    appendRows(el, rows);
+  }
+
+  // 浏览器预览没有后端，用导出的卡片凑一棵树
+  function previewFiles() {
+    const cards = (window.__CLEW__ && window.__CLEW__.cards) || {};
+    const byModule = Object.create(null);
+    const out = [];
+    Object.keys(cards).forEach(function (id) {
+      const c = cards[id] || {};
+      const p = splitId(id);
+      let f = byModule[p.module];
+      if (!f) {
+        f = byModule[p.module] = {
+          module: p.module,
+          path: p.module.replace(/\./g, "/") + ".py",
+          is_third_party: false,
+          has_main_guard: false,
+          symbols: 0,
+        };
+        out.push(f);
+      }
+      f.symbols += 1;
+      if (!spCache.has(p.module)) spCache.set(p.module, []);
+      spCache.get(p.module).push({
+        card_id: id,
+        module: p.module,
+        qualname: p.qualname,
+        kind: c.kind || "func",
+        def_line: (c.lines && c.lines[0] && c.lines[0].ln) || 0,
+        is_entry: false,
+        params: [],
+        fanin: 0,
+      });
+    });
+    const entries = Object.create(null);
+    (window.__CLEW_ENTRIES__ || []).forEach(function (e) {
+      if (e && e.id) entries[e.id] = true;
+    });
+    spEntrySyms = [];
+    out.forEach(function (f) {
+      f.symbols.sort(function (a, b) {
+        return a.def_line - b.def_line;
+      });
+      (spCache.get(f.module) || []).forEach(function (s) {
+        if (entries[s.card_id]) {
+          s.is_entry = true;
+          spEntrySyms.push(s);
+        }
+      });
+    });
+    spEntrySyms.sort(function (a, b) {
+      return a.module < b.module ? -1 : a.module > b.module ? 1 : a.def_line - b.def_line;
+    });
+    out.sort(function (a, b) {
+      return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+    });
+    return out;
+  }
+
+  function spReset() {
+    spCache.clear();
+    spFileByModule = new Map();
+    spStates.all = spBlank();
+    spStates.entry = spBlank();
+    spStates.fav = spBlank();
+    spStates.recent = spBlank();
+    spTree = null;
+    spEntrySyms = null;
+  }
+
+  async function spLoad() {
+    if (!desktop) {
+      if (spLoadedFor !== "preview") {
+        spReset();
+        spFiles = previewFiles();
+        spFiles.forEach((f) => spFileByModule.set(f.module, f));
+        spLoadedFor = "preview";
+      }
+      spRender();
+      return;
+    }
+    if (!currentPath) return;
+    if (spLoadedFor === currentPath) {
+      spRender();
+      return;
+    }
+    spLoadedFor = null;
+    try {
+      const rows = await api.invoke("files");
+      spReset();
+      spFiles = rows || [];
+      spFiles.forEach((f) => spFileByModule.set(f.module, f));
+      spLoadedFor = currentPath;
+    } catch (err) {
+      // 索引还没建好时这里会失败，等建完 watchScan 会再叫一次
+      if (window.__clewLog) window.__clewLog("files 取数失败：" + err);
+      if (!spFiles) spFiles = [];
+    }
+    spRender();
+  }
+
+  function setSideOpen(on) {
+    sideOpen = on;
+    side.hidden = !on;
+    document.body.classList.toggle("side-open", on);
+    rail.firstElementChild.classList.toggle("on", on);
+    if (on) spLoad();
+    // 画布宽度变了，卡片要重排；app.js 只监听 resize
+    window.dispatchEvent(new Event("resize"));
+  }
+
+  rail.firstElementChild.addEventListener("click", function () {
+    setSideOpen(!sideOpen);
+  });
+
+  spList.addEventListener("click", async function (e) {
+    const flag = e.target.closest("[data-fav]");
+    if (flag) {
+      e.stopPropagation();
+      await toggleFavorite(flag.dataset.fav);
+      spRender();
+      return;
+    }
+    const row = e.target.closest(".sp-row");
+    if (!row) return;
+    if (row.dataset.dir) {
+      toggleDir(row.dataset.dir);
+      return;
+    }
+    if (row.dataset.mod) {
+      toggleFile(row.dataset.mod);
+      return;
+    }
+    if (!row.dataset.card) return;
+    // 点箭头只管展开，点名字才换根，跟 PyCharm 里文件树的手感一致
+    if (e.target.closest('[data-act="caret"]')) {
+      toggleSym(row.dataset.card);
+      return;
+    }
+    if (typeof window.openRoot === "function") await window.openRoot(row.dataset.card);
+  });
+
+  // 换根之后把高亮挪到新的一行，不重取数据
+  const rootChangedBefore = window.__clewRootChanged;
+  window.__clewRootChanged = function (rootId) {
+    if (rootChangedBefore) rootChangedBefore(rootId);
+    if (!sideOpen) return;
+    const list = spList.querySelectorAll(".sp-row.sel");
+    Array.prototype.forEach.call(list, function (el) {
+      el.classList.remove("sel");
+    });
+    if (!rootId) return;
+    Array.prototype.forEach.call(spList.querySelectorAll(".sp-row"), function (el) {
+      if (el.dataset.card === rootId) el.classList.add("sel");
+    });
+  };
+
+  // 打开/关闭项目后由外壳调用一次：换项目就重取，回欢迎页就收起。
+  function spSyncProject() {
+    if (!currentPath) {
+      spFiles = null;
+      spLoadedFor = null;
+      spReset();
+      setSideOpen(false);
+      return;
+    }
+    if (!sideOpen) return; // 收着的侧栏不该在后台白取一份数据
+    spLoad();
+  }
+  window.__clewSide = {
+    toggle: setSideOpen,
+    reload: function () {
+      spLoadedFor = null;
+      spLoad();
+    },
+    setView: setView,
+    sync: spSyncProject,
+    rows: function () {
+      return collectRows();
+    },
+  };
+
+  syncViewLabel();
+
+  // 启动时已经在项目里就直接把侧栏亮出来；欢迎页上它是收起的
+  if (currentPath || !desktop) {
+    setSideOpen(true);
+  }
 
   window.clewShell = {
     openPath: openPath,

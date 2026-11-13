@@ -2,6 +2,14 @@
 
 //! Tauri shell: the frontend reads the index through these commands only.
 
+// 配置里现在有 devUrl：dev 构建不带资源、直接连本地服务，release 必须带上
+// custom-protocol（`cargo app`）才会把 src/ 嵌进二进制。忘了带就是一扇白窗，
+// 这里在编译期拦住，别等运行起来才发现。
+#[cfg(all(dev, not(debug_assertions)))]
+compile_error!(
+    "release 构建要带前端资源：cargo build -p clew-app --release --features custom-protocol，或直接用 `cargo app`"
+);
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -484,7 +492,38 @@ fn files(state: State<'_, AppState>) -> Result<Vec<walk::FileRow>, String> {
 fn symbols_in(module: String, state: State<'_, AppState>) -> Result<Vec<walk::SymbolRow>, String> {
     let guard = index_guard(&state);
     let index = index_or(&guard)?;
-    walk::symbols_in(index.mat.conn(), &module).map_err(|e| e.to_string())
+    walk::symbols_in(index.mat.conn(), index.project_id, &module).map_err(|e| e.to_string())
+}
+
+/// 侧栏「入口函数」视图：全项目的入口定义，一次取完。
+#[tauri::command]
+fn entry_symbols(state: State<'_, AppState>) -> Result<Vec<walk::SymbolRow>, String> {
+    let guard = index_guard(&state);
+    let index = index_or(&guard)?;
+    walk::entry_symbols(index.mat.conn(), index.project_id).map_err(|e| e.to_string())
+}
+
+/// 侧边栏符号树：整个项目的文件与定义，一次取完。
+#[tauri::command]
+fn tree(state: State<'_, AppState>) -> Result<Vec<walk::FileNode>, String> {
+    let t = Instant::now();
+    let guard = index_guard(&state);
+    let index = index_or(&guard)?;
+    let root = index.root.clone();
+    let mut rows = walk::tree(index.mat.conn(), index.project_id).map_err(|e| e.to_string())?;
+    let mut symbols = 0usize;
+    for r in rows.iter_mut() {
+        r.path = walk::rel_path(&root, &r.path);
+        symbols += r.symbols.len();
+    }
+    eprintln!(
+        "[t] tree @{:.0}ms took {:.1}ms files={} symbols={}",
+        since_start_ms(),
+        t.elapsed().as_secs_f64() * 1000.0,
+        rows.len(),
+        symbols
+    );
+    Ok(rows)
 }
 
 fn index_or(guard: &Option<Index>) -> Result<&Index, String> {
@@ -508,15 +547,12 @@ fn scan_guard<'a>(state: &'a State<'_, AppState>) -> std::sync::MutexGuard<'a, O
 #[derive(Serialize)]
 struct SearchPayload {
     hits: Vec<clew_core::search::Hit>,
-    /// kind -> 被过滤掉的命中数，界面用来提示「另有 N 个方法命中」
-    suppressed: Vec<(String, usize)>,
 }
 
 #[tauri::command]
 fn search(
     q: String,
-    kinds: Option<Vec<String>>,
-    limit: Option<usize>,
+    scope: Option<String>,
     ctx: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<SearchPayload, String> {
@@ -526,41 +562,15 @@ fn search(
         .mat
         .search_index()
         .ok_or_else(|| "搜索索引还没建好".to_string())?;
-    let want: Vec<clew_core::search::Kind> = match kinds {
-        Some(list) if !list.is_empty() => list
-            .iter()
-            .filter_map(|k| clew_core::search::Kind::parse(k))
-            .collect(),
-        _ => vec![
-            clew_core::search::Kind::Func,
-            clew_core::search::Kind::Method,
-            clew_core::search::Kind::Class,
-            clew_core::search::Kind::File,
-            clew_core::search::Kind::Mod,
-        ],
-    };
-    let page = clew_core::search::run(
-        &table,
-        &clew_core::search::Query {
-            text: &q,
-            kinds: want,
-            ctx_module: ctx.as_deref(),
-            limit: limit.unwrap_or(200),
-        },
-    );
+    let scope = clew_core::search::Scope::parse(scope.as_deref().unwrap_or("entry"));
+    let query = clew_core::search::Query::parse(&q, scope, ctx);
+    let page = clew_core::search::run(&table, &query);
     let root = index.root.clone();
     let mut hits = page.hits;
     for h in hits.iter_mut() {
         h.path = walk::rel_path(&root, &h.path);
     }
-    Ok(SearchPayload {
-        hits,
-        suppressed: page
-            .suppressed
-            .into_iter()
-            .map(|(k, n)| (k.to_string(), n))
-            .collect(),
-    })
+    Ok(SearchPayload { hits })
 }
 
 /// 用户自己的入口：收藏与最近打开，存在应用数据目录，不跟索引一起删。
@@ -694,6 +704,8 @@ fn main() {
             log_line,
             files,
             symbols_in,
+            entry_symbols,
+            tree,
             search,
             roots,
             open_project,

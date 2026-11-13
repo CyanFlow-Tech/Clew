@@ -16,3 +16,6 @@ LAUNCH.md
 
 # tauri generated schemas
 src-tauri/gen/
+
+# prototype 用的真实索引导出，换项目重新导，不进仓库
+prototype/tree-data.js
