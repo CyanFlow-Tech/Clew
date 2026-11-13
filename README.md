@@ -7,6 +7,127 @@ at a time, and keep the trail of what you have read.
 
 ---
 
+## Using Clew
+
+### Open a project
+
+The desktop window reads a SQLite index at `<project>/.clew/index.db`. The first open
+builds it in the background and shows progress in the status bar; later opens read it
+directly.
+
+```bash
+# release build (see "Building a release" for how to make one)
+target\release\clew-app.exe E:\path\to\project
+
+# development build, which also hot-reloads the frontend (see "Day to day")
+.\tools\dev.ps1 -Project E:\path\to\project
+```
+
+Opening the window with `cargo run -p clew-app` alone is not enough in development: that
+build loads the frontend from `http://127.0.0.1:1755`, so `tools/dev.ps1` has to be
+running. A blank window means that server is not up.
+
+### The window
+
+- **Sidebar, left.** A symbol tree of the whole project: folder, then file, then the
+  definitions inside it. The dropdown at the top of the panel switches what it lists:
+
+  | View | What it shows | Default |
+  |---|---|---|
+  | 全部函数 | every definition in the project | collapsed |
+  | 入口函数 | entries the scanner found, one per line as `function` + file name | collapsed |
+  | 收藏夹 | what you marked with ★ | flat list |
+  | 最近使用 | cards you actually clicked in, newest first | flat list |
+
+  Folders and files expand on click; the panel's right edge can be dragged to resize it,
+  and the width is remembered.
+
+- **Canvas.** Every card is one function, method or class: its code, line numbers, and one
+  anchor per call site. Clicking an anchor opens the callee as a new card next to it. The
+  breadcrumb in the title bar is the path you descended; the minimap in the corner can be
+  clicked or dragged to move around.
+
+- **★ marks an entry.** In the entry panel and on card headers. Marked cards show up under
+  收藏夹 in the sidebar.
+
+- **Ctrl+P** opens the entry panel: search by `module prefix:function`, `module.`,
+  `:function`, or a bare name, press Enter to make it the root, **Esc** closes it.
+  **Ctrl+R** reloads the window.
+
+---
+
+## Developing Clew
+
+### Repository layout
+
+| Path | What lives here |
+|---|---|
+| `crates/clew-core` | parsing (tree-sitter), call resolution, index storage, search |
+| `crates/clew-cli` | the `clew` command line; every capability is verifiable here first |
+| `src-tauri` | window-side commands (`src-tauri/src/main.rs`) and the Tauri config |
+| `src/` | frontend: `shell.js` is the shell and panels, `app.js` is the canvas, plain HTML + JS, no bundler, no npm |
+| `tools/` | dev server, CDP harnesses, preview scripts |
+| `prototype/` | standalone HTML mockups for UI experiments |
+| `bench/` | the performance baseline script |
+
+### Day to day
+
+```powershell
+.\tools\dev.ps1 -Project E:\path\to\project
+```
+
+That starts a static server on `http://127.0.0.1:1755` (with `Cache-Control: no-store`)
+and runs the debug window against it, so `src/` is loaded at runtime instead of being
+baked into the binary.
+
+- **Editing html/js**: save, the window reloads itself within a second (it watches
+  `index.html`, `app.js`, `shell.js`, `themes.js`, and appends a version query so the
+  WebView cannot serve a cached script). `Ctrl+R` forces it.
+- **Editing Rust**: stop the script and run it again. Debug builds are incremental and
+  much faster than release.
+- `dev.ps1` also opens the WebView2 debugging port (9222 by default, `-Cdp 0` turns it
+  off), so `node tools/cdp.js "<js expression>"` can inspect the live window: DOM,
+  computed styles, the current state of the panes.
+
+### Building a release
+
+```powershell
+cargo app
+```
+
+That is an alias for `cargo build -p clew-app --release --features custom-protocol`,
+defined in `.cargo/config.toml`. The `custom-protocol` feature is what makes Tauri embed
+`src/` into the binary; without it the release build would try to load the dev server and
+show a blank window, so `src-tauri/src/main.rs` refuses to compile in that state.
+
+### Verifying without clicking around
+
+```bash
+# the index itself
+cargo run -p clew-cli -- scan E:\path\to\project
+cargo run -p clew-cli -- entries E:\path\to\project
+cargo run -p clew-cli -- stats E:\path\to\project
+cargo run -p clew-cli -- files E:\path\to\project
+cargo run -p clew-cli -- tree E:\path\to\project --rows 40
+cargo run -p clew-cli -- search E:\path\to\project 'curator:main'
+
+# sidebar and entry panel, in a headless Edge over CDP
+.\tools\side-check.ps1
+.\tools\panel-check.ps1
+```
+
+`side-check.ps1` serves the real index data through a Tauri stub and asserts row counts,
+expansion state and the panel geometry; `panel-check.ps1` does the same for the entry
+panel. Both print one JSON blob, so a change is a number, not an impression.
+
+### Working agreements
+
+Read [AGENTS.md](AGENTS.md) before touching code: it covers asking before writing, real-data
+acceptance, the rendering-before-scale rule, commit message format, and the rule that agents
+verify the UI through the browser and CDP instead of launching the window themselves.
+
+---
+
 ## The problem
 
 Reading an unfamiliar Python codebase, the hard part is not "find the definition". It is:
@@ -39,36 +160,6 @@ time, and remembers the path you took.
 
 ---
 
-## What works today
-
-The Rust core, the CLI, and a Tauri desktop shell with a first-pass GUI.
-
-```bash
-# Build the index for a project
-cargo run -p clew-cli -- scan /path/to/project
-
-# List discovered entry points
-cargo run -p clew-cli -- entries /path/to/project
-
-# Read the counters back from the index
-cargo run -p clew-cli -- stats /path/to/project
-
-# Show the argument bindings of the calls on one line of one function
-cargo run -p clew-cli -- args /path/to/project 'Class.method' 42
-
-# Walk the call graph interactively from an entry point
-cargo run -p clew-cli -- walk /path/to/project
-
-# Open the desktop app, which reads the same index
-cargo run -p clew-app -- /path/to/project
-```
-
-`scan` writes a SQLite index at `<project>/.clew/index.db`; that database is the single
-source of truth the GUI reads from. There is no intermediate JSON, and the frontend is
-plain HTML + JS loaded straight out of `src/` — no bundler, no npm.
-
----
-
 ## How it differs
 
 |  | Graph viewers / LLM knowledge graphs | Compiler-based indexes | **Clew** |
@@ -91,9 +182,9 @@ The GUI is the interaction model this project is built around: cards you open in
 a `◆` on every call that shows what it bound, class cards that grow only the methods you
 have actually entered, and the whole graph re-laid out as you go.
 
-Not yet implemented: notes attached to cards (the table and the command exist, the UI
-does not), visited/unvisited shading, type-aware resolution for `obj.method()` chains
-(planned via `ty`), path export, and collapsing of single in/out chains in `walk`.
+Not yet implemented: notes attached to cards (the table and the command exist, the UI does
+not), visited/unvisited shading, type-aware resolution for `obj.method()` chains (planned
+via `ty`), path export, and collapsing of single in/out chains in `walk`.
 
 ---
 
