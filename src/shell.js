@@ -1164,6 +1164,8 @@
 
   // ── 项目操作 ────────────────────────────────────────────────────
   let currentPath = window.__CLEW_PATH__ ? normPath(window.__CLEW_PATH__) : null;
+  // 收藏与最近，来自 roots.json；侧栏的收藏夹 / 最近使用两个视图都读它
+  let rootData = { favorites: [], recent: [] };
 
   function setStatus(text, isError) {
     status.classList.remove("busy");

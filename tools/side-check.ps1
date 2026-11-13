@@ -51,6 +51,9 @@ $stub = @'
               d.forEach((f) => f.symbols.forEach((s) => { if (s.is_entry) out.push(s); }));
               return out;
             });
+            // roots 第一次调用先挂起，由检查脚本显式放行：真实窗口里它往往
+            // 晚于第一次渲染，rootData 没有默认值时 release 就是这样炸的。
+            // 用挂起/放行而不是 setTimeout，时序是确定的，不靠猜多久够。
             if (cmd === "roots") {
               const a = (args && args.action) || "get";
               if (a === "toggle") {
@@ -59,7 +62,20 @@ $stub = @'
                 if (i >= 0) window.__STUB_FAVS__.splice(i, 1);
                 else window.__STUB_FAVS__.push(id);
               }
-              return Promise.resolve({ favorites: window.__STUB_FAVS__.slice(), recent: [] });
+              if (!window.__STUB_ROOTS_READY__) {
+                return new Promise((resolve) =>
+                  window.__STUB_ROOTS_WAITERS__.push(() =>
+                    resolve({
+                      favorites: window.__STUB_FAVS__.slice(),
+                      recent: window.__STUB_RECENT__.slice(),
+                    })
+                  )
+                );
+              }
+              return Promise.resolve({
+                favorites: window.__STUB_FAVS__.slice(),
+                recent: window.__STUB_RECENT__.slice(),
+              });
             }
             if (cmd === "cards") {
               const cards = {}, refs = {};
@@ -83,6 +99,9 @@ $stub = @'
       };
       window.__STUB_TREE__ = fetch("__tree.json").then((r) => r.json());
       window.__STUB_FAVS__ = [];
+      window.__STUB_RECENT__ = [];
+      window.__STUB_ROOTS_READY__ = false;
+      window.__STUB_ROOTS_WAITERS__ = [];
       window.__STUB_ENTRIES__ = [{ id: "reference.Arena:playGame", label: "reference.Arena:playGame" }];
 '@
 
@@ -166,6 +185,13 @@ $check = @'
   await settle();
 
   const out = { panelVisible: !document.getElementById("side-panel").hidden };
+  // 这一步之前 roots 还没回来：树已经画出来了，说明不依赖它
+  out.treeRenderedBeforeRoots =
+    rows().length > 0 && window.__STUB_ROOTS_WAITERS__.length > 0;
+  // 现在放行，后续收藏夹 / 最近使用才拿得到数据
+  window.__STUB_ROOTS_READY__ = true;
+  window.__STUB_ROOTS_WAITERS__.splice(0).forEach((fn) => fn());
+  await wait(200);
   out.layout = {
     panelTop: Math.round(document.getElementById("side-panel").getBoundingClientRect().top),
     panelLeft: Math.round(document.getElementById("side-panel").getBoundingClientRect().left),
