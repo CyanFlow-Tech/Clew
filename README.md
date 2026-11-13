@@ -29,7 +29,9 @@ running. A blank window means that server is not up.
 
 ### The window
 
-- **Sidebar, left.** A symbol tree of the whole project: folder, then file, then the
+- **Activity rail, far left.** Two tabs: the symbol tree (folder icon) and search
+  (magnifier). Clicking the current tab again collapses the panel.
+- **Sidebar.** A symbol tree of the whole project: folder, then file, then the
   definitions inside it. The dropdown at the top of the panel switches what it lists:
 
   | View | What it shows | Default |
@@ -47,11 +49,16 @@ running. A blank window means that server is not up.
   breadcrumb in the title bar is the path you descended; the minimap in the corner can be
   clicked or dragged to move around.
 
-- **★ marks an entry.** In the entry panel and on card headers. Marked cards show up under
-  收藏夹 in the sidebar.
+- **★ marks an entry.** In the sidebar rows and on card headers. Marked cards show up
+  under 收藏夹.
 
-- **Ctrl+P** opens the entry panel: search by `module prefix:function`, `module.`,
-  `:function`, or a bare name, press Enter to make it the root, **Esc** closes it.
+- **Search tab.** Two filters side by side: path and function name. Both are plain
+  substring matches, one page of 50 at a time, "load more" at the bottom, and only the
+  first hit highlights the matched fragment. Typing in the path box:
+  - a bare string (`agent`) matches any single level — a directory or a file name;
+  - a dotted or slashed path (`pkg.mod`, `/tests/agent`) walks the levels from the root,
+    each level matched as a substring.
+
   **Ctrl+R** reloads the window.
 
 ---
@@ -111,14 +118,13 @@ cargo run -p clew-cli -- files E:\path\to\project
 cargo run -p clew-cli -- tree E:\path\to\project --rows 40
 cargo run -p clew-cli -- search E:\path\to\project 'curator:main'
 
-# sidebar and entry panel, in a headless Edge over CDP
+# sidebar in a headless Edge over CDP
 .\tools\side-check.ps1
-.\tools\panel-check.ps1
 ```
 
-`side-check.ps1` serves the real index data through a Tauri stub and asserts row counts,
-expansion state and the panel geometry; `panel-check.ps1` does the same for the entry
-panel. Both print one JSON blob, so a change is a number, not an impression.
+It serves the real index data through a Tauri stub and asserts row counts, expansion
+state and the panel geometry. The output is one JSON blob, so a change is a number, not
+an impression.
 
 ### Working agreements
 

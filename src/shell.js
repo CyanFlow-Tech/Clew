@@ -293,124 +293,6 @@
       white-space:nowrap;margin-top:2px}
     .w-hint{color:#6f737a;padding:26px 10px;line-height:1.9}
 
-    /* 顶栏的根按钮 */
-    #root-btn{display:flex;align-items:center;gap:7px;max-width:300px;flex:none;
-      background:#1a2029;border:1px solid var(--bd);border-radius:6px;height:24px;
-      padding:0 9px;cursor:pointer;font:inherit;font-size:12px;color:var(--tx)}
-    #root-btn:hover{border-color:var(--acc);background:#1d2530}
-    #root-btn.open{border-color:var(--acc);box-shadow:0 0 0 2px rgba(88,166,255,.18)}
-    #root-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-      max-width:236px;color:#c6d0da}
-    #root-star{color:#e3b341;opacity:.35;font-size:11px}
-    #root-star.on{opacity:1}
-    .rb-caret{color:var(--dim);font-size:9px}
-
-    /* 入口面板：上排自定义入口与最近，中间搜索带种类勾选，下排符号与文件结果 */
-    #entry-panel{position:fixed;left:12px;top:88px;width:min(860px,calc(100vw - 24px));
-      height:min(660px,calc(100vh - 108px));
-      background:#161b22;border:1px solid #30363d;border-radius:10px;
-      box-shadow:0 24px 60px #000b;display:flex;flex-direction:column;z-index:60;overflow:hidden}
-    #entry-panel[hidden]{display:none}
-    .ep-top{display:flex;flex:0 0 auto;max-height:38%;min-height:0;background:#141920;
-      border-bottom:1px solid #30363d}
-    /* 单栏列表：占据搜索带以下的全部高度 */
-    .ep-one{display:flex;flex:1;min-height:0;flex-direction:column}
-    .ep-one-head{gap:10px}
-    .ep-switch{margin-left:auto;display:flex;border:1px solid #2a313a;border-radius:5px;
-      overflow:hidden}
-    .ep-switch button{background:none;border:none;color:#8b95a2;font:inherit;font-size:11px;
-      padding:2px 10px;cursor:pointer;line-height:16px}
-    .ep-switch button:hover{color:#c6d0da;background:#1d2530}
-    .ep-switch button.on{background:#243040;color:var(--acc)}
-    .ep-switch button + button{border-left:1px solid #2a313a}
-    .ep-one-head > span#ep-one-title{color:#8b95a2}
-    .ep-col-l{flex:1 1 auto;width:100%;
-      display:flex;flex-direction:column;min-height:0}
-    .ep-col-r{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
-    /* 搜索带是下排的抬头：底色比上排亮一档，和下面两块连成一组 */
-    .ep-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;flex:none;
-      border-bottom:1px solid #20262e;background:transparent}
-    .ep-bar input{flex:1;min-width:0;background:#1a2029;border:1px solid #2a313a;
-      border-radius:5px;height:26px;padding:0 9px;color:var(--tx);font:inherit;
-      font-size:12px;outline:0}
-    .ep-bar input::placeholder{color:#525b66}
-    .ep-bar input:focus{border-color:#3d4f66;background:#1d2530}
-    .ep-kinds{display:flex;gap:9px;font-size:11.5px;color:#8b95a2;flex:none}
-    .ep-kinds label{display:flex;align-items:center;gap:3px;cursor:pointer;
-      user-select:none;-webkit-user-select:none}
-    .ep-kinds label:hover{color:#c6d0da}
-    .ep-kinds input{margin:0;accent-color:var(--acc);width:12px;height:12px}
-    .ep-filt{padding:6px 12px;color:#6b7480;font-size:11px}
-    .ep-more{color:var(--acc);cursor:pointer}
-    .ep-more:hover{text-decoration:underline}
-    .ep-head{display:flex;align-items:center;gap:7px;padding:9px 12px 7px;
-      color:#8b95a2;font-size:11px;letter-spacing:.5px;flex:none}
-    .ep-head .n{color:#4a525c}
-    .ep-sf{display:flex;align-items:center;gap:7px;padding:0 12px 8px;
-      border-bottom:1px solid #262c34;flex:none}
-    .ep-sf input{flex:1;min-width:0;background:#1a2029;border:1px solid #2a313a;border-radius:5px;
-      height:24px;padding:0 8px;color:var(--tx);font:inherit;font-size:12px;outline:0}
-    .ep-sf input::placeholder{color:#525b66}
-    .ep-sf input:focus{border-color:#3d4f66;background:#1d2530}
-    .ep-scope{color:#5b6472;font-size:9.5px;white-space:nowrap}
-    .ep-list{overflow:auto;padding:2px 0 6px;flex:1;min-height:0}
-    .ep-list::-webkit-scrollbar{width:9px}
-    .ep-list::-webkit-scrollbar-track{background:transparent}
-    .ep-list::-webkit-scrollbar-thumb{background:#2d333b;border-radius:5px;
-      border:3px solid transparent;background-clip:content-box}
-    .ep-list::-webkit-scrollbar-thumb:hover{background:#4a525c;background-clip:content-box}
-    .ep-sect{padding:7px 12px 3px;display:flex;align-items:center;gap:6px;
-      color:#6b7480;font-size:10.5px;letter-spacing:.6px}
-    .ep-sect .n{color:#4a525c}
-    /* 分组标题里也要能看到命中的那一段，字间距跟着周围走，别单独归零 */
-    .ep-sect b{color:#ffd479;font-weight:600;
-      background:rgba(255,212,121,.10);border-radius:2px}
-    .ep-sect .act{margin-left:auto;color:#5b6472;cursor:pointer;letter-spacing:0;font-size:10px}
-    .ep-sect .act:hover{color:var(--acc)}
-    .ep-grp{display:flex;align-items:center;gap:6px;padding:5px 12px 2px;margin-top:1px;
-      color:#8b95a2;font-size:10.5px;background:#171d24;border-top:1px solid #1e242c;
-      cursor:pointer}
-    .ep-grp .n{color:#4a525c}
-    .ep-grp:hover{background:#1b222c}
-    .ep-grp .arw{width:11px;flex:none;color:#5b6472;font-size:9px;text-align:center}
-    .ep-grp .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .ep-grp .hitmark{color:#ffd479;font-size:10px;margin-left:6px;letter-spacing:0}
-    .ep-grp .tail .ln{max-width:210px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-    .ep-grp .tail .ln:hover{color:var(--acc)}
-    .ep-node{display:flex;align-items:center;gap:5px;padding:2px 14px 2px 0;cursor:pointer;
-      font-size:12px;white-space:nowrap;border-left:2px solid transparent}
-    .ep-node:hover{background:#1d242e}
-    .ep-node .arw{width:11px;flex:none;color:#5b6472;font-size:9px;text-align:center}
-    .ep-node .ic{width:14px;flex:none;text-align:center;color:#5b6472;font-size:11px}
-    .ep-node.file .ic{color:#58a6ff;opacity:.75}
-    .ep-node.sym .ic{color:#f0883e;opacity:.85}
-    .ep-node .nm{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
-    /* 扁平结果：模块前缀降一级，末段仍是主色，同一模块的行会纵向对齐 */
-    .ep-node .q-prefix{color:#6b7784}
-    .qrow .q-pre{color:#6b7784}
-    .qrow .q-sep{color:#3f4854;margin:0 2px}
-    .qrow .q-fn{color:#c8d2dc}
-    .qrow b{color:#ffd479;font-weight:600}
-    .ep-node.flatq{padding-top:3px;padding-bottom:3px}
-    .ep-node .tail{display:flex;align-items:center;gap:7px;flex:none;margin-left:auto}
-    .ep-node .ln,.ep-node .cnt{flex:none;color:#4a525c;font-size:10px}
-    .ep-node .flag{flex:none;color:#3c454f;padding:2px 3px;border-radius:3px;
-      display:inline-flex;align-items:center;gap:3px;line-height:0}
-    .ep-node:hover .flag{color:#8b95a2}
-    .ep-node .flag.on{color:#e3b341}
-    .ep-node .flag svg path{fill:none}
-    .ep-node .flag.on svg path{fill:currentColor}
-    .ep-node .flag:hover{background:#2b2416;color:#ffd479}
-    .ep-node .flag svg{display:block}
-    .ep-node b{color:#ffd479;font-weight:600;background:rgba(255,212,121,.10);border-radius:2px}
-    .ep-dot{width:5px;height:5px;border-radius:3px;background:#f0883e;flex:none;opacity:.8}
-    .ep-empty{padding:8px 12px;color:#5f6874;font-size:11.5px}
-    /* 尾部放所在容器：符号给模块、文件给目录、模块给父模块，长了截断 */
-    .ep-node .ln{max-width:210px;overflow:hidden;text-overflow:ellipsis}
-    .ep-foot{border-top:1px solid #262c34;padding:6px 12px;color:#4a525c;font-size:10.5px;
-      display:flex;gap:14px;flex:none;background:#141920}
-    .ep-foot .k{color:#6b7480}
-    .ep-foot .right{margin-left:auto;color:#e3b341}
   `;
   document.head.appendChild(style);
 
@@ -902,12 +784,7 @@
   const status = document.createElement("span");
   status.className = "tb-status";
 
-  const rootBtn = document.createElement("button");
-  rootBtn.id = "root-btn";
-  rootBtn.title = "选择从这个函数开始读";
-  rootBtn.innerHTML =
-    '<span id="root-star">★</span><span id="root-name">未选择入口</span>' +
-    '<span class="rb-caret">▾</span>';
+
 
   const row1 = document.createElement("div");
   row1.id = "tb-row1";
@@ -955,7 +832,6 @@
   const row2 = document.createElement("div");
   row2.id = "tb-row2";
   row2.dataset.tauriDragRegion = "";
-  row2.appendChild(rootBtn);
   row2.appendChild(trail);
   row2.appendChild(status);
 
@@ -1506,11 +1382,6 @@
   }
 
   // ── 入口面板 ────────────────────────────────────────────────────
-  // 面板只做一件事：按名字找到定义，回车设为根，关掉。
-  // 顶部两块是常用入口，下面是搜索框与结果。文件树不在这里，它是主界面的侧栏。
-  //
-  // 查询只有两级。冒号左边是模块前缀，字面匹配，右边是函数名，分四级命中。
-  // 没有冒号时整串同时试两边，函数名命中优先，补上冒号只是收紧，画面不会翻。
   // 收藏标记统一用五角星：未收藏描边，收藏后填色（见 .flag.on path{fill}）。
   // 这条 path 与 app.js 里的 STAR_PATH 是同一个形状，改的时候两边一起改。
   const STAR_PATH =
@@ -1521,95 +1392,11 @@
     ' style="position:static;inset:auto;width:12px;height:12px;display:block">' +
     '<path d="' + STAR_PATH + '"/></svg>';
 
-  const panel = document.createElement("div");
-  panel.id = "entry-panel";
-  panel.hidden = true;
-  panel.innerHTML =
-    // 「最近」搬到侧栏视图里了，这里只留自定义入口一栏
-    '<div class="ep-top">' +
-      '<div class="ep-col-l"><div class="ep-head">自定义入口<span class="n" id="ep-fav-count"></span></div>' +
-        '<div class="ep-list" id="ep-fav-list"></div></div>' +
-    "</div>" +
-    '<div class="ep-bar">' +
-      '<input id="ep-q" placeholder="hermes_cli.curator:main   ·   hermes_cli.   ·   :main" ' +
-        'autocomplete="off" spellcheck="false">' +
-    "</div>" +
-    '<div class="ep-one">' +
-      '<div class="ep-head ep-one-head"><span id="ep-one-title">自动识别</span>' +
-        '<span class="n" id="ep-one-count"></span>' +
-        '<span class="ep-switch">' +
-          '<button type="button" data-scope="entry">自动识别</button>' +
-          '<button type="button" data-scope="all">全部函数</button>' +
-        "</span>" +
-      "</div>" +
-      '<div class="ep-list" id="ep-one-list"></div>' +
-    "</div>" +
-    '<div class="ep-foot">' +
-      '<span><span class="k">↵</span> 设为根</span>' +
-      '<span><span class="k">★</span> 标记入口</span>' +
-      '<span><span class="k">Esc</span> 关闭</span>' +
-      '<span class="right" id="ep-marked"></span>' +
-    "</div>";
-  document.body.appendChild(panel);
-
-  const qInput = panel.querySelector("#ep-q");
-  const favEntryList = panel.querySelector("#ep-fav-list");
-  const oneList = panel.querySelector("#ep-one-list");
-  const scopeBtns = Array.from(panel.querySelectorAll("[data-scope]"));
-
-  let panelOpen = false;
-  let rootData = { favorites: [], recent: [] };
-  let searchSeq = 0;
-  let hits = [];
-  const SCOPE_KEY = "clew.searchScope";
-  let scope = "entry";
-  try {
-    const saved = localStorage.getItem(SCOPE_KEY);
-    if (saved === "entry" || saved === "all") scope = saved;
-  } catch (err) {
-    /* 读不出来就用默认 */
-  }
-  function saveScope() {
-    try {
-      localStorage.setItem(SCOPE_KEY, scope);
-    } catch (err) {
-      /* 隐私模式写不进就算了 */
-    }
-  }
-
-  function esc(s) {
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  /// 后端给的是字节偏移，纯 ASCII 时与 JS 下标一致，否则放弃上色
-  function markSpans(text, spans) {
-    if (!spans || !spans.length) return esc(text);
-    let bytes = 0;
-    for (let i = 0; i < text.length; i++) bytes += text.charCodeAt(i) < 0x80 ? 1 : 3;
-    if (bytes !== text.length) return esc(text);
-    let out = "";
-    let last = 0;
-    spans.forEach(function (pair) {
-      const s = pair[0];
-      const e = pair[1];
-      if (s < last || e > text.length) return;
-      out += esc(text.slice(last, s)) + "<b>" + esc(text.slice(s, e)) + "</b>";
-      last = e;
-    });
-    return out + esc(text.slice(last));
-  }
   function splitId(id) {
     const i = id.indexOf(":");
     return i < 0
       ? { module: id, qualname: id }
       : { module: id.slice(0, i), qualname: id.slice(i + 1) };
-  }
-  /// 当前打开的模块，用于给同模块的命中加分
-  function activeModule() {
-    const id = window.getActiveRoot ? window.getActiveRoot() : null;
-    return id ? splitId(id).module : null;
-  }
-  function scannedEntries() {
-    return (typeof ENTRIES !== "undefined" ? ENTRIES : []).filter((e) => e && e.id);
   }
 
   /// 卡片 id（module:qualname）的显示形式，模块级换成 __main__
@@ -1618,6 +1405,20 @@
     if (i < 0) return String(id);
     return String(id).slice(0, i) + ":" + showQual(String(id).slice(i + 1));
   }
+  /// 把命中的那一段包成 <b>，只用在排第一的结果上
+  function markHit(text, needle) {
+    const t = String(text || "");
+    const n = String(needle || "").toLowerCase();
+    if (!n) return esc(t);
+    const i = t.toLowerCase().indexOf(n);
+    if (i < 0) return esc(t);
+    return (
+      esc(t.slice(0, i)) +
+      '<span class="hit">' + esc(t.slice(i, i + n.length)) + "</span>" +
+      esc(t.slice(i + n.length))
+    );
+  }
+
   /// 显示名：库里的 <module> 就是 if __name__ == "__main__" 那一块
   function showQual(qual) {
     return qual === "<module>" ? "__main__" : qual;
@@ -1631,211 +1432,6 @@
     return parts.qualname.split(".").pop() || parts.qualname;
   }
 
-  // 一行快捷入口：名字、模块、旗标
-  function entryRow(id) {
-    const star = rootData.favorites.indexOf(id) >= 0;
-    return (
-      '<div class="ep-node sym" data-root="' + esc(id) + '">' +
-        '<span class="ic">\u0192</span>' +
-        '<span class="nm">' + esc(shortName(id)) + "</span>" +
-        '<span class="tail">' +
-          '<span class="ln">' + esc(splitId(id).module) + "</span>" +
-          '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(id) +
-            '" title="标记入口">' + FLAG_SVG + "</span>" +
-        "</span>" +
-      "</div>"
-    );
-  }
-
-  /// 前缀太长时省中间，保住头一段与末一段，否则整串被 CSS 截掉尾巴
-  function shortenModule(module) {
-    if (module.length <= 34) return module;
-    const segs = module.split(".");
-    if (segs.length < 3) return module;
-    return segs[0] + ".…." + segs.slice(-1)[0];
-  }
-
-  // 一行结果，格式固定为 模块:qualname，右侧只有行号
-  function resultRow(h) {
-    const qn = h.qualname || "";
-    const lastSeg = qn.split(".").pop() || qn;
-    const shortened = shortenModule(h.module || "");
-    const cut = shortened !== (h.module || "");
-    // 命中区间换算到展示位置
-    const nameOff = h.field === "name" ? qn.length - lastSeg.length : 0;
-    const preHtml =
-      h.field === "module" && !cut
-        ? markSpans(h.module || "", h.spans)
-        : esc(shortened);
-    const nameHtml =
-      (h.field === "name" || h.field === "qualname") && !cut
-        ? markSpans(qn, (h.spans || []).map(([a, b]) => [a + nameOff, b + nameOff]))
-        : esc(qn);
-    const star = rootData.favorites.indexOf(h.card_id) >= 0;
-    const icon = h.kind === "class" ? "C" : h.kind === "method" ? "\u0192" : "\u0192";
-    return (
-      '<div class="ep-node sym qrow" data-root="' + esc(h.card_id) + '">' +
-        '<span class="ic">' + icon + "</span>" +
-        '<span class="nm"><span class="q-pre">' + preHtml + "</span>" +
-          '<span class="q-sep">:</span><span class="q-fn">' + nameHtml + "</span></span>" +
-        (h.is_entry ? '<span class="ep-dot" title="自动识别的入口"></span>' : "") +
-        '<span class="tail">' +
-          (h.kind !== "mod" && h.def_line
-            ? '<span class="ln" title="' + esc(h.path) + '">L' + h.def_line + "</span>"
-            : "") +
-          '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(h.card_id) +
-            '" title="标记入口">' + FLAG_SVG + "</span>" +
-        "</span>" +
-      "</div>"
-    );
-  }
-
-  function paintFavs() {
-    const favs = rootData.favorites;
-    favEntryList.innerHTML = favs.length
-      ? favs.map((id) => entryRow(id)).join("")
-      : '<div class="ep-empty">给定义按 ★ 就会出现在这里</div>';
-    panel.querySelector("#ep-fav-count").textContent = String(favs.length);
-  }
-
-  function syncScope() {
-    scopeBtns.forEach((b) => b.classList.toggle("on", b.dataset.scope === scope));
-  }
-
-  function paintResults() {
-    const typing = !!qInput.value.trim();
-    panel.querySelector("#ep-one-title").textContent =
-      typing ? "结果" : scope === "entry" ? "自动识别" : "全部函数";
-    oneList.innerHTML = hits.length
-      ? hits.map((h) => resultRow(h)).join("")
-      : '<div class="ep-empty">' +
-        (typing ? "没有匹配的定义" : scope === "entry" ? "扫描器没有找到入口" : "没有定义") +
-        "</div>";
-    panel.querySelector("#ep-one-count").textContent = String(hits.length);
-  }
-
-  // 空查询拉一份浏览列表，与搜索走同一个接口、同一种行格式
-  async function loadBrowse() {
-    if (!desktop) {
-      // 浏览器预览没有后端，只能拿导出数据里的入口凑一份
-      const entries = scannedEntries().slice();
-      entries.sort(function (a, b) {
-        const ma = splitId(a.id).module.toLowerCase();
-        const mb = splitId(b.id).module.toLowerCase();
-        return ma < mb ? -1 : ma > mb ? 1 : a.id < b.id ? -1 : 1;
-      });
-      hits = entries.map(function (e) {
-        const parts = splitId(e.id);
-        return {
-          kind: parts.qualname === "<module>" ? "mod" : "func",
-          module: parts.module,
-          path: "",
-          qualname: parts.qualname,
-          def_line: 0,
-          card_id: e.id,
-          is_entry: true,
-          field: "module",
-          spans: [],
-          score: 0,
-        };
-      });
-      paintResults();
-      return;
-    }
-    try {
-      const page = await api.invoke("search", { q: "", scope: scope, limit: 500 });
-      hits = page.hits || [];
-    } catch (err) {
-      hits = [];
-    }
-    paintResults();
-  }
-
-  // 同一时刻只让一个搜索在跑，连打时只发最后一次
-  let searchBusy = false;
-  let searchPending = false;
-
-  async function runSearch() {
-    const q = qInput.value.trim();
-    if (!q) {
-      await loadBrowse();
-      return;
-    }
-    if (!desktop) {
-      paintResults();
-      return;
-    }
-    if (searchBusy) {
-      searchPending = true;
-      return;
-    }
-    searchBusy = true;
-    const seq = ++searchSeq;
-    try {
-      const page = await api.invoke("search", {
-        q: q,
-        scope: scope,
-        limit: 200,
-        ctx: activeModule(),
-      });
-      if (seq === searchSeq) {
-        hits = page.hits || [];
-        paintResults();
-      }
-    } catch (err) {
-      if (seq === searchSeq) {
-        oneList.innerHTML = '<div class="ep-empty">' + esc(String(err)) + "</div>";
-      }
-    } finally {
-      searchBusy = false;
-      if (searchPending) {
-        searchPending = false;
-        runSearch();
-      }
-    }
-  }
-
-  let searchTimer = null;
-  qInput.addEventListener("input", function () {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(runSearch, 150);
-  });
-
-  async function openEntryPanel() {
-    if (panelOpen) return;
-    panelOpen = true;
-    panel.hidden = false;
-    rootBtn.classList.add("open");
-    if (desktop && currentPath) {
-      try {
-        rootData = await api.invoke("roots", { project: currentPath, action: "get" });
-      } catch (err) {
-        rootData = { favorites: [], recent: [] };
-      }
-    }
-    paintFavs();
-    syncScope();
-    await runSearch();
-    updateMarked();
-    qInput.focus();
-    qInput.select();
-  }
-
-  function closeEntryPanel() {
-    panelOpen = false;
-    panel.hidden = true;
-    rootBtn.classList.remove("open");
-  }
-
-  function updateMarked() {
-    panel.querySelector("#ep-marked").textContent =
-      "已标记 " + rootData.favorites.length + " 个入口";
-  }
-
-  async function chooseRoot(id) {
-    closeEntryPanel();
-    if (typeof window.openRoot === "function") await window.openRoot(id);
-  }
 
   async function toggleFavorite(id) {
     if (!desktop || !currentPath) return;
@@ -1848,10 +1444,8 @@
     } catch (err) {
       return;
     }
-    paintFavs();
-    paintResults();
-    updateMarked();
-    window.__clewRootChanged(window.getActiveRoot ? window.getActiveRoot() : null);
+    if (spView === "fav") spRender();
+    if (sideTab === "search") spSearchRender();
     if (window.__clewRefreshCard) window.__clewRefreshCard(id);
   }
 
@@ -1867,62 +1461,15 @@
     setNote(text, !!isError);
   };
 
-  panel.addEventListener("click", async function (e) {
-    const scopeBtn = e.target.closest("[data-scope]");
-    if (scopeBtn) {
-      scope = scopeBtn.dataset.scope === "all" ? "all" : "entry";
-      saveScope();
-      syncScope();
-      await runSearch();
-      return;
-    }
-    const fav = e.target.closest("[data-fav]");
-    if (fav) {
-      e.stopPropagation();
-      await toggleFavorite(fav.dataset.fav);
-      return;
-    }
-    const root = e.target.closest("[data-root]");
-    if (root) await chooseRoot(root.dataset.root);
-  });
-
-  qInput.addEventListener("keydown", function (e) {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    const first = oneList.querySelector("[data-root]");
-    if (first) chooseRoot(first.dataset.root);
-  });
-
-  rootBtn.addEventListener("click", function () {
-    panelOpen ? closeEntryPanel() : openEntryPanel();
-  });
-  document.addEventListener("mousedown", function (e) {
-    if (!panelOpen) return;
-    if (panel.contains(e.target) || rootBtn.contains(e.target)) return;
-    closeEntryPanel();
-  });
-  document.addEventListener("keydown", function (e) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
-      e.preventDefault();
-      panelOpen ? closeEntryPanel() : openEntryPanel();
-    }
-    if (e.key === "Escape" && panelOpen) closeEntryPanel();
-  });
 
   // app.js 在切根和打开根之后回调这里，顶栏按钮跟着变
-  window.__clewRootChanged = function (rootId) {
-    // 顶部那颗「当前入口」按钮显示的是卡片 id，模块级入口要写成 __main__
-    const label = rootId ? showId(rootId) : "";
-    document.getElementById("root-name").textContent = label || "未选择入口";
-    document.getElementById("root-name").title = label;
-    const star = document.getElementById("root-star");
-    star.classList.toggle("on", !!rootId && rootData.favorites.indexOf(rootId) >= 0);
-  };
+
   // 打开不算「用过」：预览时一口气点开十几个函数，全记进去就没意义了。
   // 只有用户在卡片上真的点过东西，app.js 才会喊这里（见 __clewCardUsed）。
   window.__clewRootOpened = function (rootId) {
     if (!desktop || !currentPath || !rootId) return;
-    window.__clewRootChanged(rootId);
+    // 侧栏在文件末尾才挂上这个回调，早于此的调用直接跳过
+    if (window.__clewRootChanged) window.__clewRootChanged(rootId);
   };
 
   window.__clewCardUsed = function (id) {
@@ -1930,46 +1477,21 @@
     api.invoke("roots", { project: currentPath, action: "recent", cardId: id })
       .then(function (data) {
         rootData = data;
-        updateMarked();
         if (spView === "recent") spRender();
       })
       .catch(function () {});
   };
 
-  // app.js 先加载，它开根的时候这个回调还没定义，这里补一次同步
-  if (typeof window.getActiveRoot === "function") {
-    window.__clewRootChanged(window.getActiveRoot());
-  }
 
   // 启动时先把收藏读出来，卡片头上的旗标才有正确的初始状态
   if (desktop && currentPath) {
     api.invoke("roots", { project: currentPath, action: "get" })
       .then(function (d) {
         rootData = d;
-        window.__clewRootChanged(window.getActiveRoot());
       })
       .catch(function () {});
   }
 
-  // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
-  // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
-  // 调试口：浏览器预览里没有后端，用它注入假数据验证面板渲染
-  // 调试口：浏览器预览里没有后端，用它注入假数据验证渲染
-  window.__clewPanel = {
-    open: openEntryPanel,
-    close: closeEntryPanel,
-    search: runSearch,
-    setRoots: function (d) {
-      rootData = d || { favorites: [], recent: [] };
-      paintFavs();
-        updateMarked();
-    },
-    setHits: function (page) {
-      hits = (page && page.hits) || [];
-      paintResults();
-    },
-    inputs: { q: qInput },
-  };
 
   // ── 侧边栏：符号树 ──────────────────────────────────────────────
   // 仿 PyCharm：最左边一条活动栏，右边一块面板。面板顶部是视图下拉，
@@ -2032,6 +1554,21 @@
     .sp-list::-webkit-scrollbar-thumb:hover{background:#4a525d;border:2px solid transparent;
       background-clip:padding-box}
     .sp-list::-webkit-scrollbar-corner{background:transparent}
+    /* 搜索视图的两个输入框：并排，顶在树上方，不跟着列表滚 */
+    .sp-pane{display:flex;flex-direction:column;flex:1;min-height:0}
+    .sp-pane[hidden]{display:none}
+    .sp-query{display:flex;flex-direction:column;gap:5px;padding:6px;
+      flex:none;border-bottom:1px solid #2b2d30}
+    .sp-query[hidden]{display:none}
+    .sp-q-row{display:flex;align-items:center;gap:6px}
+    .sp-q-label{color:#8f939b;font-size:11px;flex:none;white-space:nowrap}
+    .sp-query input{flex:1 1 auto;min-width:0;background:#161a20;border:1px solid #2b2d30;
+      border-radius:4px;color:var(--tx);font:inherit;font-size:12px;padding:3px 6px}
+    .sp-query input::placeholder{color:#5b636e}
+    .sp-query input:focus{outline:none;border-color:#2e436e}
+    .sp-row.more{color:var(--acc);font-size:12px;justify-content:center}
+    .sp-row.more:hover{background:#22303f}
+    .sp-row .hit{color:var(--sel);font-weight:600}
     .sp-row{display:flex;align-items:center;gap:5px;height:24px;padding-right:6px;
       white-space:nowrap;cursor:pointer;color:#c9cdd3;font-size:13px}
     .sp-row:hover{background:#2b2d30}
@@ -2121,27 +1658,124 @@
     return spStates[spView] || spStates.all;
   }
 
+  // 活动栏就是侧栏的 tab：一个符号树，一个搜索，点哪个切哪个
   const rail = document.createElement("div");
   rail.id = "side-rail";
   rail.innerHTML =
-    '<button type="button" class="rail-btn on" title="符号树">' + ICON.folder + "</button>";
+    '<button type="button" class="rail-btn on" data-tab="tree" title="符号树">' +
+      ICON.folder + "</button>" +
+    '<button type="button" class="rail-btn" data-tab="search" title="搜索">' +
+      icon('<circle cx="5.2" cy="5.2" r="3.2"/><path d="M7.6 7.6l2.8 2.8"/>') +
+    "</button>";
   document.body.appendChild(rail);
 
   const side = document.createElement("div");
   side.id = "side-panel";
   side.hidden = true;
   side.innerHTML =
-    '<div class="sp-head">' +
-      '<button type="button" class="sp-view" id="sp-view-btn">' +
-        '<span id="sp-view-label"></span>' + ICON.chevronDown +
-      "</button>" +
+    '<div class="sp-pane" id="sp-pane-tree">' +
+      '<div class="sp-head">' +
+        '<button type="button" class="sp-view" id="sp-view-btn">' +
+          '<span id="sp-view-label"></span>' + ICON.chevronDown +
+        "</button>" +
+      "</div>" +
+      '<div class="sp-list" id="sp-list"></div>' +
     "</div>" +
-    '<div class="sp-list" id="sp-list"></div>';
+    '<div class="sp-pane" id="sp-pane-search" hidden>' +
+      '<div class="sp-query" id="sp-query">' +
+        '<label class="sp-q-row"><span class="sp-q-label">路径</span>' +
+          '<input id="sp-q-path" autocomplete="off" spellcheck="false"></label>' +
+        '<label class="sp-q-row"><span class="sp-q-label">函数</span>' +
+          '<input id="sp-q-name" autocomplete="off" spellcheck="false"></label>' +
+      "</div>" +
+      '<div class="sp-list" id="sp-list-search"></div>' +
+    "</div>";
   document.body.appendChild(side);
 
   const spViewBtn = side.querySelector("#sp-view-btn");
   const spViewLabel = side.querySelector("#sp-view-label");
   const spList = side.querySelector("#sp-list");
+  const spQuery = side.querySelector("#sp-query");
+  const spQPath = side.querySelector("#sp-q-path");
+  const spQName = side.querySelector("#sp-q-name");
+  const spListSearch = side.querySelector("#sp-list-search");
+  const spPaneTree = side.querySelector("#sp-pane-tree");
+  const spPaneSearch = side.querySelector("#sp-pane-search");
+
+  // ── 搜索视图 ────────────────────────────────────────────────────
+  // 两个条件各自独立：路径里含这串、函数名里含这串，同时成立才留下。
+  // 分页在背后是 offset/limit，前端只记已经拿到多少条。
+  const SP_PAGE_SIZE = 50;
+  const spSearch = { total: 0, truncated: false, hits: [], busy: false, timer: null };
+  let spSearchSeq = 0;
+
+  function spQueryText() {
+    return { path: spQPath.value.trim(), name: spQName.value.trim() };
+  }
+
+  async function spSearchPage(append) {
+    if (!desktop || !currentPath) return;
+    if (spSearch.busy) return;
+    spSearch.busy = true;
+    const seq = ++spSearchSeq;
+    const q = spQueryText();
+    const offset = append ? spSearch.hits.length : 0;
+    try {
+      const page = await api.invoke("search_symbols", {
+        qPath: q.path,
+        qName: q.name,
+        offset: offset,
+        limit: SP_PAGE_SIZE,
+      });
+      if (seq !== spSearchSeq) return;
+      spSearch.total = page.total || 0;
+      spSearch.truncated = !!page.truncated;
+      spSearch.hits = append ? spSearch.hits.concat(page.hits || []) : page.hits || [];
+    } catch (err) {
+      if (seq !== spSearchSeq) return;
+      if (window.__clewLog) window.__clewLog("search_symbols 失败：" + err);
+      spSearch.hits = [];
+      spSearch.total = 0;
+    } finally {
+      spSearch.busy = false;
+    }
+    if (seq === spSearchSeq) spSearchRender();
+  }
+
+  /// 搜索面板自己的渲染：一页 50 条，不够就末尾挂一行「加载更多」
+  function spSearchRender() {
+    const q = spQueryText();
+    const rows = [];
+    spSearch.hits.forEach(function (h, i) {
+      rows.push({
+        kind: "entry",
+        depth: 0,
+        card: h.card_id,
+        module: h.module,
+        qual: h.qualname,
+        file: "",
+        line: 0,
+        // 只有排第一的那行高亮命中片段，其余保持安静
+        hot: i === 0 && !!(q.name || q.path),
+        hotName: q.name,
+        hotPath: q.path,
+      });
+      rows.push({ kind: "note", depth: 0, card: h.card_id, file: h.path });
+    });
+    if (spSearch.hits.length < spSearch.total) rows.push({ kind: "more", depth: 0 });
+
+    spListSearch.innerHTML = "";
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "sp-empty";
+      empty.textContent = spSearch.busy ? "" : "没有匹配";
+      spListSearch.appendChild(empty);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    rows.forEach((r) => frag.appendChild(spRowEl(r)));
+    spListSearch.appendChild(frag);
+  }
 
   // ── 侧栏宽度可拖 ────────────────────────────────────────────────
   // 宽度只写进 --side-w，画布、面包屑行、底部提示都跟着这个变量走。
@@ -2529,12 +2163,19 @@
     if (r.kind === "entry") {
       el.dataset.card = r.card;
       el.dataset.module = r.module || "";
-      el.title = r.file + ":" + showQual(r.qual);
+      el.title = (r.file ? r.file : r.module) + ":" + showQual(r.qual);
       el.innerHTML =
         '<span class="caret"></span>' +
         '<span class="ic">\u0192</span>' +
-        '<span class="nm fn">' + esc(shortName(r.card)) + "</span>" +
+        '<span class="nm fn">' +
+        (r.hot && r.hotName ? markHit(shortName(r.card), r.hotName) : esc(shortName(r.card))) +
+        "</span>" +
         '<span class="tail">' + flagHtml + "</span>";
+      return el;
+    }
+    if (r.kind === "more") {
+      el.dataset.more = "1";
+      el.innerHTML = '<span>加载更多</span>';
       return el;
     }
     if (r.kind === "note") {
@@ -2542,7 +2183,10 @@
       // 点它跟点上面那行函数一样，打开同一个符号
       el.style.paddingLeft = 6 + r.depth * 11 + 31 + "px";
       el.dataset.card = r.card;
-      el.innerHTML = '<span class="note-file">' + esc(r.file) + "</span>";
+      el.innerHTML =
+        '<span class="note-file">' +
+        (r.hot && r.hotPath ? markHit(r.file, r.hotPath) : esc(r.file)) +
+        "</span>";
       return el;
     }
 
@@ -2588,6 +2232,7 @@
     const token = ++spSeq;
     if (spView === "entry") await ensureEntry();
     if (token !== spSeq) return;
+
     const rows = collectRows();
     spList.innerHTML = "";
     spRows = rows;
@@ -2833,22 +2478,66 @@
     sideOpen = on;
     side.hidden = !on;
     document.body.classList.toggle("side-open", on);
-    rail.firstElementChild.classList.toggle("on", on);
-    if (on) spLoad();
+    if (on) {
+      applyTab();
+      spLoad();
+    } else {
+      // 面板收起来了，活动栏就不该还亮着一个 tab
+      Array.prototype.forEach.call(rail.children, function (b) {
+        b.classList.remove("on");
+      });
+    }
     // 画布宽度变了，卡片要重排；app.js 只监听 resize
     window.dispatchEvent(new Event("resize"));
   }
 
-  rail.firstElementChild.addEventListener("click", function () {
-    setSideOpen(!sideOpen);
+  function spSearchReset() {
+    clearTimeout(spSearch.timer);
+    spSearch.timer = setTimeout(function () {
+      spSearch.hits = [];
+      spSearch.total = 0;
+      spSearchPage(false);
+    }, 250);
+  }
+  spQPath.addEventListener("input", spSearchReset);
+  spQName.addEventListener("input", spSearchReset);
+
+  // ── 活动栏 tab ──────────────────────────────────────────────────
+  let sideTab = "tree";
+
+  function applyTab() {
+    Array.prototype.forEach.call(rail.children, function (b) {
+      b.classList.toggle("on", b.dataset.tab === sideTab);
+    });
+    spPaneTree.hidden = sideTab !== "tree";
+    spPaneSearch.hidden = sideTab !== "search";
+    if (sideTab === "search" && !spSearch.hits.length && !spSearch.total) {
+      spSearchPage(false);
+    }
+  }
+
+  rail.addEventListener("click", function (e) {
+    const btn = e.target.closest("[data-tab]");
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+    // 点当前 tab = 收起面板；点另一个 = 切过去并展开
+    if (sideOpen && tab === sideTab) {
+      setSideOpen(false);
+      return;
+    }
+    sideTab = tab;
+    applyTab();
+    setSideOpen(true);
   });
 
-  spList.addEventListener("click", async function (e) {
+  async function onTreeClick(e) {
     const flag = e.target.closest("[data-fav]");
     if (flag) {
       e.stopPropagation();
       await toggleFavorite(flag.dataset.fav);
+      // 树和搜索面板是两套列表，收藏状态两边都要重新画
       spRender();
+      if (sideTab === "search") spSearchRender();
       return;
     }
     const row = e.target.closest(".sp-row");
@@ -2868,6 +2557,18 @@
       return;
     }
     if (typeof window.openRoot === "function") await window.openRoot(row.dataset.card);
+  }
+
+  spList.addEventListener("click", onTreeClick);
+
+  // 搜索面板：结果行的点击规则和树一致（同一份处理），再加上「加载更多」
+  spListSearch.addEventListener("click", async function (e) {
+    const more = e.target.closest("[data-more]");
+    if (more) {
+      spSearchPage(true);
+      return;
+    }
+    await onTreeClick(e);
   });
 
   // 换根之后把高亮挪到新的一行，不重取数据

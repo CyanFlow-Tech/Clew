@@ -526,6 +526,57 @@ fn tree(state: State<'_, AppState>) -> Result<Vec<walk::FileNode>, String> {
     Ok(rows)
 }
 
+/// 侧栏搜索：路径一个过滤条件、函数名一个过滤条件，都是任意子串。
+/// 一次只回一页，前端滚到底再要下一页。
+#[derive(Serialize)]
+struct SymbolSearchPayload {
+    total: usize,
+    truncated: bool,
+    hits: Vec<walk::SymbolHit>,
+}
+
+#[tauri::command]
+fn search_symbols(
+    q_path: Option<String>,
+    q_name: Option<String>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<SymbolSearchPayload, String> {
+    let t = Instant::now();
+    let guard = index_guard(&state);
+    let index = index_or(&guard)?;
+    let root = index.root.clone();
+    let out = walk::search_symbols(
+        index.mat.conn(),
+        index.project_id,
+        &index.root,
+        q_path.as_deref().unwrap_or(""),
+        q_name.as_deref().unwrap_or(""),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(50).max(1);
+    let mut hits: Vec<walk::SymbolHit> = out.hits.into_iter().skip(offset).take(limit).collect();
+    for h in hits.iter_mut() {
+        h.path = walk::rel_path(&root, &h.path);
+    }
+    eprintln!(
+        "[t] search_symbols @{:.0}ms took {:.1}ms total={} page={} took_rows={}",
+        since_start_ms(),
+        t.elapsed().as_secs_f64() * 1000.0,
+        out.total,
+        offset / limit + 1,
+        hits.len()
+    );
+    Ok(SymbolSearchPayload {
+        total: out.total,
+        truncated: out.truncated,
+        hits,
+    })
+}
+
 fn index_or(guard: &Option<Index>) -> Result<&Index, String> {
     guard.as_ref().ok_or_else(|| "还没有打开项目".to_string())
 }
@@ -542,36 +593,6 @@ fn scan_guard<'a>(state: &'a State<'_, AppState>) -> std::sync::MutexGuard<'a, O
     state.scan.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// 入口面板的搜索：命中文件名会列出该文件的全部定义，命中定义名只列命中的。
-/// 一次搜索的回包：排序好的命中，加上被种类过滤挡下的数量。
-#[derive(Serialize)]
-struct SearchPayload {
-    hits: Vec<clew_core::search::Hit>,
-}
-
-#[tauri::command]
-fn search(
-    q: String,
-    scope: Option<String>,
-    ctx: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<SearchPayload, String> {
-    let guard = index_guard(&state);
-    let index = index_or(&guard)?;
-    let table = index
-        .mat
-        .search_index()
-        .ok_or_else(|| "搜索索引还没建好".to_string())?;
-    let scope = clew_core::search::Scope::parse(scope.as_deref().unwrap_or("entry"));
-    let query = clew_core::search::Query::parse(&q, scope, ctx);
-    let page = clew_core::search::run(&table, &query);
-    let root = index.root.clone();
-    let mut hits = page.hits;
-    for h in hits.iter_mut() {
-        h.path = walk::rel_path(&root, &h.path);
-    }
-    Ok(SearchPayload { hits })
-}
 
 /// 用户自己的入口：收藏与最近打开，存在应用数据目录，不跟索引一起删。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -705,8 +726,8 @@ fn main() {
             files,
             symbols_in,
             entry_symbols,
+            search_symbols,
             tree,
-            search,
             roots,
             open_project,
             boot,

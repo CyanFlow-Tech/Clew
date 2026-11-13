@@ -87,6 +87,26 @@ enum Command {
         #[arg(long, default_value = ".clew/index.db")]
         db: PathBuf,
     },
+    /// Substring search over paths and definition names (the sidebar's search)
+    FindSyms {
+        /// Project root
+        project: PathBuf,
+        /// Filter against the file path, any substring, case insensitive
+        #[arg(long)]
+        path: Option<String>,
+        /// Filter against the definition name, any substring, case insensitive
+        #[arg(long)]
+        name: Option<String>,
+        /// 1-based page number
+        #[arg(long, default_value = "1")]
+        page: usize,
+        /// Rows per page
+        #[arg(long, default_value = "50")]
+        size: usize,
+        /// Index path; relative paths resolve against the project root
+        #[arg(long, default_value = ".clew/index.db")]
+        db: PathBuf,
+    },
     /// Search definitions. Use `prefix:name`, `prefix:`, `:name` or bare text
     Search {
         /// Project root
@@ -354,6 +374,56 @@ fn main() -> anyhow::Result<()> {
             println!(
                 "\n{} files ({third} third party), {symbols} symbols, took {took:.1}ms",
                 files.len()
+            );
+        }
+        Command::FindSyms {
+            project,
+            path,
+            name,
+            page,
+            size,
+            db,
+        } => {
+            let root = project.canonicalize()?;
+            let (conn, project_id) = open_index(&root, db)?;
+            let t = std::time::Instant::now();
+            let out = clew_core::walk::search_symbols(
+                &conn,
+                project_id,
+                &root,
+                path.as_deref().unwrap_or(""),
+                name.as_deref().unwrap_or(""),
+            )?;
+            let took = t.elapsed().as_secs_f64() * 1000.0;
+            let size = size.max(1);
+            let start = page.saturating_sub(1) * size;
+            let slice: Vec<_> = out
+                .hits
+                .iter()
+                .skip(start)
+                .take(size)
+                .map(|h| {
+                    let mut h = h.clone();
+                    h.path = clew_core::walk::rel_path(&root, &h.path);
+                    h
+                })
+                .collect();
+            println!(
+                "{:<5}  {:<6}  {:<44}  {}",
+                "score", "kind", "qualname", "file:line"
+            );
+            for h in &slice {
+                println!(
+                    "{:<5}  {:<6}  {:<44}  {}:{}",
+                    h.score, h.kind, h.qualname, h.path, h.def_line
+                );
+            }
+            println!(
+                "\n{} matches{} · page {} · showing {} · took {took:.1}ms",
+                out.total,
+                if out.truncated { " (capped)" } else { "" },
+                page,
+                slice.len()
             );
         }
         Command::Search {
