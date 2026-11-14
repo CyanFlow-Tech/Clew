@@ -1782,10 +1782,14 @@
   // 第一版只有项目空间一项；以后加项就在这里加导航按钮与对应面板。
   const ST_TEXT = {
     title: "设置",
-    section: "用户数据目录",
+    nav: "目录",
+    data: "用户数据目录",
+    cache: "界面缓存目录",
     pathLabel: "路径",
+    toDefault: "默认",
     migrate: "迁移",
     migrating: "正在迁移",
+    restart: "重启后生效",
   };
 
   const stStyle = document.createElement("style");
@@ -1819,7 +1823,8 @@
     .st-nav-item:hover{background:#2b2d30}
     .st-nav-item.on{background:#2e436e;color:#e8edf7}
     .st-content{flex:1;min-width:0;overflow:auto;padding:16px 18px}
-    .st-pane{display:flex;flex-direction:column;gap:14px}
+    .st-page{display:flex;flex-direction:column;gap:24px}
+    .st-pane{display:flex;flex-direction:column;gap:12px}
     .st-h{margin:0;font-size:13px;font-weight:600;color:#dfe1e5}
     .st-field{display:flex;align-items:center;gap:8px}
     .st-k{flex:none;color:#8f939b}
@@ -1839,30 +1844,39 @@
   `;
   document.head.appendChild(stStyle);
 
-  /// 项目空间那块内容。每个容器各自一份实例，打开时重新读一次状态。
-  /// 迁移会换掉空间根，所以实例都记在这里，一个改完其余的一起刷新。
+  /// 设置页：两个目录，各一块，用标题区分。两处（弹窗与欢迎页）共用同一个构造函数，
+  /// 每个容器一份实例，打开时重读一次状态。
   const spacePanes = [];
 
-  function spaceSettings() {
+  /// 一块目录设置：标题 + 一行（路径框 + 迁移）。两块只有「搬什么」不同。
+  /// `notify(kind)` 由设置页给，用来把别的容器（欢迎页那份）的同一块刷新过来。
+  function directoryBlock(kind, notify) {
+    const isCache = kind === "cache";
     const box = document.createElement("div");
     box.className = "st-pane";
+    box.dataset.block = kind;
     box.innerHTML =
-      '<div class="st-h">' + ST_TEXT.section + "</div>" +
+      '<div class="st-h">' + (isCache ? ST_TEXT.cache : ST_TEXT.data) + "</div>" +
       '<div class="st-field">' +
         '<span class="st-k">' + ST_TEXT.pathLabel + "</span>" +
         '<input class="st-input" data-k="path" readonly spellcheck="false">' +
+        '<button type="button" class="st-btn" data-k="default" disabled>' +
+        ST_TEXT.toDefault + "</button>" +
         '<button type="button" class="st-btn" data-k="migrate" disabled>' +
-        ST_TEXT.migrate + "</button></div>" +
+        ST_TEXT.migrate + "</button>" +
+      "</div>" +
       '<div class="st-note" data-k="note" hidden></div>';
 
     const pathEl = box.querySelector('[data-k="path"]');
+    const defaultBtn = box.querySelector('[data-k="default"]');
     const migrateBtn = box.querySelector('[data-k="migrate"]');
     const noteEl = box.querySelector('[data-k="note"]');
 
-    // 一行只有一个路径：框里放的就是「要用哪个目录」，初始等于当前的空间根。
-    // 换了目录才需要迁移，所以按钮的可用性就看这两个值是否相等。
+    // 一行只有一个路径：框里放的就是「要用哪个目录」。
+    // 两块都要点迁移才搬，语义一致；区别只在搬的内容与生效时机。
     let home = "";
     let picked = "";
+    let defaultPath = "";
     let busy = false;
 
     function setNote(text, isError) {
@@ -1876,6 +1890,7 @@
       pathEl.title = pathEl.value;
       migrateBtn.disabled = busy || !picked || picked === home;
       migrateBtn.textContent = busy ? ST_TEXT.migrating : ST_TEXT.migrate;
+      defaultBtn.disabled = busy || !home || home === defaultPath;
     }
 
     async function refresh() {
@@ -1883,13 +1898,15 @@
       if (!desktop) {
         home = "";
         picked = "";
+        defaultPath = "";
         render();
         setNote("浏览器预览没有后端，改不了这个目录", true);
         return;
       }
       try {
         const state = await api.invoke("space_state");
-        home = normPath(state.home);
+        home = normPath(isCache ? state.webview_dir : state.home);
+        defaultPath = normPath(isCache ? state.webview_default : state.default_home);
         picked = home;
       } catch (err) {
         setNote(String(err), true);
@@ -1897,6 +1914,7 @@
       render();
     }
 
+    // 点框只选目录，不写任何设置：真正搬动要按迁移
     async function pick() {
       if (!desktop || busy) return;
       let dir = null;
@@ -1912,8 +1930,16 @@
       render();
     }
 
-    // 点框就是选目录：只有一个入口，不再摆一个按钮重复同一件事
     pathEl.onclick = pick;
+
+    // 「默认」只把默认值填进框里，不写设置也不搬东西——和点框选目录同构，
+    // 真正搬动统一由「迁移」执行。
+    defaultBtn.onclick = function () {
+      if (!desktop || busy || !defaultPath) return;
+      picked = defaultPath;
+      setNote("");
+      render();
+    };
 
     migrateBtn.onclick = async function () {
       if (!desktop || !picked || busy || picked === home) return;
@@ -1921,13 +1947,18 @@
       setNote("");
       render();
       try {
-        const report = await api.invoke("migrate_space", { target: picked });
-        home = normPath(report.home);
-        picked = home;
-        // 别的容器（欢迎页那份）也要跟着换过来
-        for (const other of spacePanes) {
-          if (other !== handle) other.refresh();
+        const target = picked;
+        if (isCache) {
+          home = normPath(await api.invoke("migrate_webview_dir", { target: target }));
+          // WebView2 在进程起来时就把目录锁死了，换目录只能下次启动生效
+          setNote(ST_TEXT.restart, false);
+        } else {
+          const report = await api.invoke("migrate_space", { target: target });
+          home = normPath(report.home);
         }
+        picked = home;
+        // 别的容器（欢迎页那份）同一块也要跟着换过来
+        notify(kind);
       } catch (err) {
         setNote(String(err), true);
       } finally {
@@ -1937,9 +1968,40 @@
     };
 
     render();
-    const handle = { el: box, refresh: refresh };
-    spacePanes.push(handle);
-    return handle;
+    return {
+      el: box,
+      refresh: refresh,
+    };
+  }
+
+  /// 一页里两块：都是目录，语义挨着，所以放同一个导航项下用标题分开。
+  function settingsPage() {
+    const box = document.createElement("div");
+    box.className = "st-page";
+
+    const blocks = {};
+    const page = { el: box };
+    page.refreshBlock = function (kind) {
+      blocks[kind].refresh();
+    };
+    page.refresh = function () {
+      blocks.data.refresh();
+      blocks.cache.refresh();
+    };
+
+    const notify = function (kind) {
+      for (const other of spacePanes) {
+        if (other !== page) other.refreshBlock(kind);
+      }
+    };
+
+    blocks.data = directoryBlock("data", notify);
+    blocks.cache = directoryBlock("cache", notify);
+    box.appendChild(blocks.data.el);
+    box.appendChild(blocks.cache.el);
+
+    spacePanes.push(page);
+    return page;
   }
 
   // 弹窗：欢迎页与主窗口共用
@@ -1951,15 +2013,17 @@
       '<div class="st-bar"><span class="st-title">' + ST_TEXT.title + "</span>" +
         '<button type="button" class="st-x" data-k="close">' + ICON.close + "</button></div>" +
       '<div class="st-main">' +
-        '<nav class="st-nav"><button type="button" class="st-nav-item on">' +
-          ST_TEXT.section + "</button></nav>" +
+        '<nav class="st-nav">' +
+          '<button type="button" class="st-nav-item on">' + ST_TEXT.nav + "</button>" +
+        "</nav>" +
         '<div class="st-content"></div>' +
       "</div>" +
     "</div>";
   document.body.appendChild(settingsModal);
 
-  const modalPane = spaceSettings();
-  settingsModal.querySelector(".st-content").appendChild(modalPane.el);
+  const modalPage = settingsPage();
+  settingsModal.querySelector(".st-content").appendChild(modalPage.el);
+
   settingsModal.querySelector('[data-k="close"]').onclick = closeSettings;
   settingsModal.addEventListener("click", function (e) {
     if (e.target === settingsModal) closeSettings();
@@ -1970,7 +2034,7 @@
 
   function openSettings() {
     settingsModal.hidden = false;
-    modalPane.refresh();
+    modalPage.refresh();
   }
 
   function closeSettings() {
@@ -1980,11 +2044,11 @@
   // 活动栏的齿轮：它不是 tab，别带 data-tab，否则会被面板的切换逻辑收走
   rail.querySelector("#rail-settings").onclick = openSettings;
 
-  // 欢迎页：只搬「项目空间」这一项，不铺整张设置表
+  // 欢迎页：同一个设置页，只放这一页，不铺别的设置
   const wProjects = welcome.querySelector("#w-projects");
   const wSpace = welcome.querySelector("#w-space");
-  const welcomePane = spaceSettings();
-  wSpace.appendChild(welcomePane.el);
+  const welcomePage = settingsPage();
+  wSpace.appendChild(welcomePage.el);
 
   function showWelcomePane(name) {
     const onSpace = name === "space";
@@ -1993,7 +2057,7 @@
     for (const btn of welcome.querySelectorAll(".w-nav button")) {
       btn.classList.toggle("active", btn.dataset.wPane === name);
     }
-    if (onSpace) welcomePane.refresh();
+    if (onSpace) welcomePage.refresh();
   }
 
   for (const btn of welcome.querySelectorAll(".w-nav button")) {

@@ -33,6 +33,10 @@ pub const DATA_ENTRIES: &[DataEntry] = &[
         name: "roots.json",
         kind: EntryKind::File,
     },
+    DataEntry {
+        name: "settings.json",
+        kind: EntryKind::File,
+    },
 ];
 
 /// 进程内的覆盖。用户改完空间根要立刻生效，不必等重启。
@@ -234,6 +238,63 @@ fn same_path(a: &Path, b: &Path) -> bool {
     normalize(a) == normalize(b)
 }
 
+/// 界面缓存目录里值得跟着走的项。
+///
+/// `EBWebView` 下绝大多数内容是 GPU 缓存、Code Cache 这类可丢的垃圾，几万个文件；
+/// 真正属于用户的是 `Local Storage`——项目列表、工作区快照、主题都存在那里，
+/// 丢了就是「打开程序一个项目都没有」。所以只登记这一项。
+pub fn cache_entries() -> Vec<PathBuf> {
+    vec![PathBuf::from("EBWebView")
+        .join("Default")
+        .join("Local Storage")]
+}
+
+/// 把 `from_cache` 里登记过的缓存项搬到 `to_cache`。
+///
+/// 目标已经有同名项就跳过：新位置攒下的 localStorage 可能更新，不覆盖。
+pub fn carry_cache(from_cache: &Path, to_cache: &Path) -> anyhow::Result<usize> {
+    let mut moved = 0;
+    for rel in cache_entries() {
+        let src = from_cache.join(&rel);
+        if !src.exists() {
+            continue;
+        }
+        let dst = to_cache.join(&rel);
+        if dst.exists() {
+            continue;
+        }
+        let mut report = MigrateReport::default();
+        copy_tree(&src, &dst, &mut report)?;
+        moved += 1;
+    }
+    Ok(moved)
+}
+
+/// 把当前缓存目录的登记项搬到目标，**覆盖**目标已有的同名项。
+///
+/// 覆盖前目标那份先改名留档成 `<项>.previous`：恢复默认时用户想带回去的是
+/// 现在正在用的那份（否则刚攒的列表又看不见），但默认目录里上一次留下的
+/// 也不该直接消失。
+pub fn replace_cache(from_cache: &Path, to_cache: &Path) -> anyhow::Result<()> {
+    for rel in cache_entries() {
+        let src = from_cache.join(&rel);
+        if !src.exists() {
+            continue;
+        }
+        let dst = to_cache.join(&rel);
+        if dst.exists() {
+            let backup = dst.with_extension("previous");
+            if backup.exists() {
+                std::fs::remove_dir_all(&backup)?;
+            }
+            std::fs::rename(&dst, &backup)?;
+        }
+        let mut report = MigrateReport::default();
+        copy_tree(&src, &dst, &mut report)?;
+    }
+    Ok(())
+}
+
 /// 清掉空间里注册过的项。**不删空间根目录本身**——用户可能在里面放了自己的东西。
 pub fn clear_entries(dir: &Path) -> io::Result<()> {
     for item in DATA_ENTRIES {
@@ -379,8 +440,83 @@ mod tests {
     }
 
     #[test]
-    fn clearing_leaves_unregistered_files_alone() {
-        let dir = scratch("clear");
+    fn cache_round_trip_keeps_local_storage_only() {
+        let base = scratch("cache");
+        let from = base.join("old");
+        let to = base.join("new");
+
+        let storage = from
+            .join("EBWebView")
+            .join("Default")
+            .join("Local Storage")
+            .join("leveldb");
+        std::fs::create_dir_all(&storage).unwrap();
+        std::fs::write(storage.join("000003.log"), b"projects").unwrap();
+        // 纯缓存，不该跟着走
+        let gpu = from.join("EBWebView").join("Default").join("GPUCache");
+        std::fs::create_dir_all(&gpu).unwrap();
+        std::fs::write(gpu.join("data_0"), vec![0u8; 64]).unwrap();
+
+        let moved = carry_cache(&from, &to).unwrap();
+        assert_eq!(moved, 1);
+        assert!(to
+            .join("EBWebView")
+            .join("Default")
+            .join("Local Storage")
+            .join("leveldb")
+            .join("000003.log")
+            .exists());
+        assert!(!to.join("EBWebView").join("Default").join("GPUCache").exists());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn cache_round_trip_does_not_overwrite_a_newer_copy() {
+        let base = scratch("cache-skip");
+        let from = base.join("old");
+        let to = base.join("new");
+        let rel = PathBuf::from("EBWebView")
+            .join("Default")
+            .join("Local Storage");
+        std::fs::create_dir_all(from.join(&rel)).unwrap();
+        std::fs::write(from.join(&rel).join("old.log"), b"old").unwrap();
+        std::fs::create_dir_all(to.join(&rel)).unwrap();
+        std::fs::write(to.join(&rel).join("new.log"), b"new").unwrap();
+
+        let moved = carry_cache(&from, &to).unwrap();
+        assert_eq!(moved, 0);
+        assert!(to.join(&rel).join("new.log").exists());
+        assert!(!to.join(&rel).join("old.log").exists());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn replace_cache_overwrites_and_keeps_a_backup() {
+        let base = scratch("cache-replace");
+        let from = base.join("old");
+        let to = base.join("new");
+        let rel = PathBuf::from("EBWebView")
+            .join("Default")
+            .join("Local Storage");
+
+        std::fs::create_dir_all(from.join(&rel)).unwrap();
+        std::fs::write(from.join(&rel).join("current.log"), b"newer").unwrap();
+        std::fs::create_dir_all(to.join(&rel)).unwrap();
+        std::fs::write(to.join(&rel).join("old.log"), b"older").unwrap();
+
+        replace_cache(&from, &to).unwrap();
+
+        // 目标里换成当前这份
+        assert!(to.join(&rel).join("current.log").exists());
+        assert!(!to.join(&rel).join("old.log").exists());
+        // 原来那份留档，没被直接删掉
+        let backup = to.join(&rel).with_extension("previous");
+        assert!(backup.join("old.log").exists());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn clearing_leaves_unregistered_files_alone() {        let dir = scratch("clear");
         std::fs::create_dir_all(dir.join("projects").join("abc")).unwrap();
         std::fs::write(dir.join("roots.json"), "{}").unwrap();
         std::fs::write(dir.join("notes-of-the-user.txt"), "keep").unwrap();

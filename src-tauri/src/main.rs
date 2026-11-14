@@ -621,25 +621,117 @@ fn roots(
         .map(|(out, _)| out)
 }
 
-/// 空间根在哪里，界面用来显示当前设置。
+/// 数据目录在哪里，界面用来显示当前设置。界面缓存的路径一并给出去。
 #[derive(serde::Serialize)]
 struct SpaceState {
     home: String,
     default_home: String,
     pointer: String,
     is_default: bool,
+    webview_dir: String,
+    webview_default: String,
+    webview_custom: bool,
 }
 
 #[tauri::command]
 fn space_state() -> SpaceState {
     let home = clew_core::space::home();
     let default_home = clew_core::space::default_home();
+    let webview_dir = clew_core::settings::webview_dir();
+    let webview_default = clew_core::settings::default_webview_dir();
     SpaceState {
         is_default: home == default_home,
+        webview_custom: webview_dir != webview_default,
         home: home.display().to_string(),
         default_home: default_home.display().to_string(),
         pointer: clew_core::space::pointer_path().display().to_string(),
+        webview_dir: webview_dir.display().to_string(),
+        webview_default: webview_default.display().to_string(),
     }
+}
+
+/// 迁移后登记旧缓存目录，等下次启动时删。
+///
+/// 为什么不当场删：迁移这一步是在程序运行中做的，旧目录正被当前这个 WebView2
+/// 用着（它承载的就是这个设置页），文件删不掉。而缓存换目录本来就要重启才生效，
+/// 所以统一排到重启那一次——`setup` 里趁 WebView2 还没起来先清掉。
+/// 一律排队，不做「有时删得掉有时删不掉」的分支。
+fn queue_cache_cleanup(dir: &Path) {
+    if !dir.join("EBWebView").exists() {
+        return;
+    }
+    if let Err(err) = clew_core::settings::add_pending_cleanup(dir) {
+        append_log("space", &format!("queue cache cleanup failed: {err}"));
+    } else {
+        eprintln!("[t] old cache queued for cleanup: {}", dir.display());
+    }
+}
+
+/// 清掉上次没删成的旧缓存目录。**必须在建窗口之前调用**：WebView2 一起来，
+/// 目录又会被锁住。
+fn cleanup_pending_cache_dirs() {
+    for dir in clew_core::settings::pending_cleanup() {
+        let target = dir.join("EBWebView");
+        if !target.exists() {
+            let _ = clew_core::settings::remove_pending_cleanup(&dir);
+            continue;
+        }
+        match std::fs::remove_dir_all(&target) {
+            Ok(()) => {
+                eprintln!("[t] cleaned old cache {}", target.display());
+                let _ = clew_core::settings::remove_pending_cleanup(&dir);
+            }
+            Err(err) => append_log(
+                "space",
+                &format!("cleanup {} failed: {err}", target.display()),
+            ),
+        }
+    }
+}
+
+/// 迁移界面缓存目录：把当前目录里的 Local Storage 带过去，再写设置。
+///
+/// 只搬 `Local Storage`——项目列表、工作区快照、主题都在那里；GPU 缓存和
+/// Code Cache 搬过来只会占地方。搬到新目录时目标必须为空；搬到默认位置是例外，
+/// 见下面那一支。生效时机不同：WebView2 在进程起来时就把目录锁死了，
+/// 所以这一项要重启才生效。
+#[tauri::command]
+fn migrate_webview_dir(target: String) -> Result<String, String> {
+    let to = PathBuf::from(target.trim());
+    if to.as_os_str().is_empty() {
+        return Err("路径是空的".to_string());
+    }
+
+    let default = clew_core::settings::default_webview_dir();
+    let from = clew_core::settings::webview_dir();
+    if from == to {
+        return Ok(to.display().to_string());
+    }
+
+    // 搬回默认位置不要求目标为空：默认目录里通常还留着上一次的 EBWebView。
+    // 搬的是「现在正在用的那份」，原有那份先留档成 `Local Storage.previous`。
+    if to == default {
+        std::fs::create_dir_all(&to).map_err(|e| format!("建不了缓存目录：{e}"))?;
+        if let Err(err) = clew_core::space::replace_cache(&from, &to) {
+            append_log("space", &format!("replace local storage failed: {err}"));
+        }
+        clew_core::settings::set_webview_dir(None)
+            .map_err(|e| format!("写不了设置：{e}"))?;
+        queue_cache_cleanup(&from);
+        return Ok(to.display().to_string());
+    }
+
+    clew_core::space::ensure_empty_target(&to)?;
+    std::fs::create_dir_all(&to).map_err(|e| format!("建不了缓存目录：{e}"))?;
+    match clew_core::space::carry_cache(&from, &to) {
+        Ok(moved) => eprintln!("[t] carry_cache moved {moved} entries"),
+        Err(err) => append_log("space", &format!("carry local storage failed: {err}")),
+    }
+
+    clew_core::settings::set_webview_dir(Some(&to))
+        .map_err(|e| format!("写不了设置：{e}"))?;
+    queue_cache_cleanup(&from);
+    Ok(to.display().to_string())
 }
 
 /// 迁移结果，界面只用来把按钮变灰，不显示数字。
@@ -686,6 +778,9 @@ fn migrate_space(target: String, state: State<'_, AppState>) -> Result<SpaceRepo
 
     // 复制时库文件还开着：SQLite 允许别的句柄读，复制不会被打断
     let report = clew_core::space::migrate(&from, &to).map_err(|e| e.to_string())?;
+
+    // 界面缓存不跟着数据目录走：两个默认位置是平级的，缓存只在自己换目录时搬。
+    // 所以这里什么都不用做，旧数据目录也能被完整清掉。
 
     // 复制完再松手：旧库的句柄挡着删目录
     let root = {
@@ -786,6 +881,29 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        // 窗口必须在这里建，不能在 tauri.conf.json 里声明：Tauri 在 Windows
+        // 上会强制把 WebView2 的数据目录指到 app_local_data_dir()，也就是
+        // %LOCALAPPDATA%\<identifier>，环境变量 WEBVIEW2_USER_DATA_FOLDER 顶不过它。
+        // 只有 WebviewWindowBuilder::data_directory 能让它落到我们的数据目录里。
+        .setup(|app| {
+            // 先清上次迁移留下的旧缓存目录：此刻 WebView2 还没起来，文件没锁
+            cleanup_pending_cache_dirs();
+
+            let webview_dir = clew_core::settings::webview_dir();
+            std::fs::create_dir_all(&webview_dir)?;
+            tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+                .title("Clew")
+                .inner_size(1440.0, 920.0)
+                .min_inner_size(900.0, 600.0)
+                .center()
+                .decorations(false)
+                .shadow(true)
+                .visible(false)
+                .background_color(tauri::window::Color(0x14, 0x17, 0x1c, 0xff))
+                .data_directory(webview_dir)
+                .build()?;
+            Ok(())
+        })
         // 页面加载完就一定有内容可画，这时候亮窗口。前端脚本正常时会先喊
         // ready，这里兜住它没跑到那一步的情况，不靠固定超时去猜。
         .on_page_load(|webview, payload| {
@@ -803,6 +921,7 @@ fn main() {
             tree,
             roots,
             space_state,
+            migrate_webview_dir,
             migrate_space,
             open_project,
             boot,

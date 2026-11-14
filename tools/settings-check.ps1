@@ -34,6 +34,8 @@ $stub = @'
         onResized() { return Promise.resolve(function () {}); },
       };
       window.__STUB_MIGRATED__ = [];
+      window.__STUB_WEBVIEW__ = [];
+      window.__STUB_RESET__ = [];
       window.__TAURI__ = {
         core: {
           invoke(cmd, args) {
@@ -47,7 +49,18 @@ $stub = @'
               default_home: "D:\\stub\\home",
               pointer: "D:\\stub\\clew.home.txt",
               is_default: true,
+              webview_dir: "D:\\stub\\home\\webview",
+              webview_default: "D:\\stub\\home\\webview",
+              webview_custom: false,
             });
+            if (cmd === "reset_webview_dir") {
+              window.__STUB_RESET__.push(1);
+              return Promise.resolve("D:\\stub\\home\\webview");
+            }
+            if (cmd === "migrate_webview_dir") {
+              window.__STUB_WEBVIEW__.push(args.target);
+              return Promise.resolve(args.target);
+            }
             if (cmd === "migrate_space") {
               window.__STUB_MIGRATED__.push(args.target);
               return Promise.resolve({
@@ -92,20 +105,19 @@ $check = @'
   const out = {};
   if (!window.clewShell) return { fatal: "shell.js 没挂上" };
 
-  // 欢迎页那一份：导航点「设置」进去，项目列表让位，内容区有标题
+  // 欢迎页那一份：导航点「设置」进去，项目列表让位，里面两块目录
   const navSpace = q('.w-nav [data-w-pane="space"]');
   const navProjects = q('.w-nav [data-w-pane="projects"]');
   if (!navSpace) return { fatal: "欢迎页没有设置入口" };
   out.welcomeNav = { label: navSpace.textContent };
   navSpace.click();
-  await wait(120);
+  await wait(150);
   out.welcomeSpace = {
     spaceShown: !q("#w-space").hidden,
     projectsHidden: q("#w-projects").hidden,
     navActive: navSpace.classList.contains("active"),
-    heading: (q("#w-space .st-h") || {}).textContent,
-    fields: q("#w-space .st-pane").querySelectorAll(".st-field").length,
-    inputs: q("#w-space .st-pane").querySelectorAll(".st-input").length,
+    blocks: q("#w-space").querySelectorAll(".st-pane").length,
+    headings: Array.from(q("#w-space").querySelectorAll(".st-h")).map((h) => h.textContent),
   };
   navProjects.click();
   await wait(120);
@@ -127,7 +139,7 @@ $check = @'
 
   // 点齿轮只开弹窗，不该把侧栏的 tab 切走
   gear.click();
-  await wait(250);
+  await wait(300);
   out.open = {
     modalShown: !q("#settings").hidden,
     treeStillOn: q('#side-rail [data-tab="tree"]').classList.contains("on"),
@@ -136,26 +148,78 @@ $check = @'
   };
 
   const modal = q("#settings");
-  const pane = modal.querySelector(".st-pane");
-  const pathEl = modal.querySelector('[data-k="path"]');
-  const migrateBtn = modal.querySelector('[data-k="migrate"]');
   const navItems = modal.querySelectorAll(".st-nav-item");
+  const blocks = modal.querySelectorAll(".st-pane");
+  const dataPane = modal.querySelector('.st-pane[data-block="data"]');
+  const cachePane = modal.querySelector('.st-pane[data-block="cache"]');
+  const pathEl = dataPane.querySelector('[data-k="path"]');
+  const migrateBtn = dataPane.querySelector('[data-k="migrate"]');
   const box = getComputedStyle(pathEl);
   out.initial = {
+    // 两块目录放在同一个导航项下，用标题分开
     navCount: navItems.length,
-    navLabel: navItems[0].textContent,
-    heading: modal.querySelector(".st-h").textContent,
-    fields: pane.querySelectorAll(".st-field").length,
-    inputs: pane.querySelectorAll(".st-input").length,
-    // 选目录只有一个入口：框自己。按钮不该再出现
-    buttons: Array.from(pane.querySelectorAll(".st-btn")).map((b) => b.textContent),
+    navLabels: Array.from(navItems).map((b) => b.textContent),
+    blocks: blocks.length,
+    headings: Array.from(modal.querySelectorAll(".st-h")).map((h) => h.textContent),
+    dataButtons: Array.from(dataPane.querySelectorAll(".st-btn")).map((b) => b.textContent),
+    cacheButtons: Array.from(cachePane.querySelectorAll(".st-btn")).map((b) => b.textContent),
     path: pathEl.value,
     migrateDisabled: migrateBtn.disabled,
     // 框要看得出来是框：至少一条下边框
     bottomBorder: box.borderBottomWidth + " " + box.borderBottomStyle,
   };
 
-  // 点框 = 弹资源管理器，选完按钮才可点
+  // 界面缓存那块：点框只选目录，「默认」只填默认值，两者都不搬；按迁移才搬
+  const cachePath = cachePane.querySelector('[data-k="path"]');
+  const cacheMigrate = cachePane.querySelector('[data-k="migrate"]');
+  const cacheDefault = cachePane.querySelector('[data-k="default"]');
+  const cacheNote = cachePane.querySelector('[data-k="note"]');
+  out.cache = {
+    path: cachePath.value,
+    buttons: Array.from(cachePane.querySelectorAll(".st-btn")).map((b) => b.textContent),
+    // 当前就在默认位置，按钮该是灰的
+    defaultDisabled: cacheDefault.disabled,
+    migrateDisabled: cacheMigrate.disabled,
+  };
+
+  cachePath.click();
+  await wait(300);
+  out.cachePicked = {
+    target: cachePath.value,
+    migrateEnabled: !cacheMigrate.disabled,
+  };
+
+  cacheMigrate.click();
+  await wait(500);
+  out.cacheAfterMigrate = {
+    calls: window.__STUB_WEBVIEW__.length,
+    path: cachePath.value,
+    migrateDisabled: cacheMigrate.disabled,
+    defaultEnabled: !cacheDefault.disabled,
+    note: cacheNote.textContent,
+  };
+
+  // 「默认」只填值：框换成默认路径、迁移按钮亮起，但一次后端调用都不该发生
+  const callsBeforeDefault = window.__STUB_WEBVIEW__.length;
+  cacheDefault.click();
+  await wait(300);
+  out.cacheDefaultFilled = {
+    path: cachePath.value,
+    migrateEnabled: !cacheMigrate.disabled,
+    noCallYet: window.__STUB_WEBVIEW__.length === callsBeforeDefault,
+  };
+
+  // 再按迁移才真的搬回默认
+  cacheMigrate.click();
+  await wait(500);
+  out.cacheBackToDefault = {
+    calls: window.__STUB_WEBVIEW__.length,
+    lastTarget: window.__STUB_WEBVIEW__[window.__STUB_WEBVIEW__.length - 1],
+    migrateDisabled: cacheMigrate.disabled,
+    note: cacheNote.textContent,
+  };
+
+  // 数据目录那块：点框 = 弹资源管理器，选完按钮才可点
   let opened = 0;
   const originalOpen = window.__TAURI__.dialog.open;
   window.__TAURI__.dialog.open = function () {

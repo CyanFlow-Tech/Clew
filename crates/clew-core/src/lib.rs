@@ -1,5 +1,6 @@
 pub mod scan;
 pub mod search;
+pub mod settings;
 pub mod snapshot;
 pub mod space;
 pub mod store;

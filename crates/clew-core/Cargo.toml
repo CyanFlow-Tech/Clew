@@ -9,6 +9,7 @@ tree-sitter-python = { workspace = true }
 rusqlite = { workspace = true }
 blake3 = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 rayon = { workspace = true }
 walkdir = { workspace = true }
 anyhow = { workspace = true }

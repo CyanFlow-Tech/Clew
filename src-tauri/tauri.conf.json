@@ -9,20 +9,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "Clew",
-        "width": 1440,
-        "height": 920,
-        "minWidth": 900,
-        "minHeight": 600,
-        "center": true,
-        "decorations": false,
-        "shadow": true,
-        "visible": false,
-        "backgroundColor": "#14171c"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
