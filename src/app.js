@@ -520,6 +520,7 @@ async function expand(id, parentHint, viaCs) {
 
   select(id);
   relayout();
+  persistWorkspace();
 }
 
 function firstPlacedCaller(id) {
@@ -870,7 +871,141 @@ function ensureTab(rootId) {
   return tabs.get(rootId);
 }
 
-function saveTab() {
+// ─── 工作区快照 ──────────────────────────────────────────────────
+// 卡片本身是 DOM，不能直接存；存的是「哪些卡、各自展开到什么程度、选了什么、
+// 滚到哪」，重启后按这份数据重建。存在 localStorage，按项目路径分开。
+const WS_PREFIX = "clew.workspace.";
+
+function workspaceKey() {
+  const p = window.__CLEW_PROJECT__;
+  return p ? WS_PREFIX + p : null;
+}
+
+function snapshotWorkspace() {
+  if (!activeRoot || !tabs.size) return null;
+  const list = [];
+  tabs.forEach(function (t, rootId) {
+    if (!t || !rootId) return;
+    const methodSets = {};
+    Object.keys(t.methodSet || {}).forEach(function (k) {
+      methodSets[k] = Array.from(t.methodSet[k] || []);
+    });
+    list.push({
+      root: rootId,
+      state: t.state || {},
+      openMethods: t.openMethods || {},
+      parentOf: t.parentOf || {},
+      methodSet: methodSets,
+      roots: Array.from(t.roots || []),
+      activated: Array.from(t.activated || []),
+      selectedId: t.selectedId || null,
+      selectedRow: t.selectedRow || null,
+      trail: t.trail || [],
+      scroll: t.scroll || { left: 0, top: 0 },
+    });
+  });
+  return { activeRoot: activeRoot, tabs: list };
+}
+
+let wsTimer = null;
+function persistWorkspace() {
+  const key = workspaceKey();
+  if (!key) return;
+  syncActiveTab(); // 先让 tabs 里的当前 tab 是最新的
+  clearTimeout(wsTimer);
+  wsTimer = setTimeout(function () {
+    try {
+      const snap = snapshotWorkspace();
+      if (snap) localStorage.setItem(key, JSON.stringify(snap));
+    } catch (err) {
+      // 配额满了或者隐私模式：丢一份快照不影响用，别打断操作
+    }
+  }, 400);
+}
+
+function readWorkspace() {
+  const key = workspaceKey();
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const snap = JSON.parse(raw);
+    return snap && snap.tabs && snap.tabs.length ? snap : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/// 只保留索引里还存在的 id：项目改过之后旧快照可能指向不存在的卡
+function keepAlive(obj, alive) {
+  const out = {};
+  Object.keys(obj || {}).forEach(function (k) {
+    if (alive[k]) out[k] = obj[k];
+  });
+  return out;
+}
+
+async function restoreWorkspace(snap) {
+  const ids = [];
+  snap.tabs.forEach(function (s) {
+    Object.keys(s.state || {}).forEach(function (id) {
+      if (ids.indexOf(id) < 0) ids.push(id);
+    });
+    (s.roots || []).forEach(function (id) {
+      if (ids.indexOf(id) < 0) ids.push(id);
+    });
+  });
+  if (!ids.length) return false;
+  // 按需模式先一次性把卡片取回来，取不到的卡就当它没了
+  await ensure(ids);
+  const alive = {};
+  ids.forEach(function (id) {
+    if (NODES[id]) alive[id] = true;
+  });
+  if (!Object.keys(alive).length) return false;
+
+  snap.tabs.forEach(function (s) {
+    if (!alive[s.root]) return;
+    const t = blankTab(s.root);
+    t.state = keepAlive(s.state, alive);
+    t.openMethods = keepAlive(s.openMethods, alive);
+    t.parentOf = keepAlive(s.parentOf, alive);
+    t.methodSet = {};
+    Object.keys(s.methodSet || {}).forEach(function (k) {
+      if (!alive[k]) return;
+      t.methodSet[k] = new Set(s.methodSet[k] || []);
+    });
+    t.roots = new Set((s.roots || []).filter(function (id) { return alive[id]; }));
+    // activated 里是 call site 的 id，不是卡片 id：用卡片表过滤会把线全丢掉
+    t.activated = new Set((s.activated || []).filter(function (id) { return !!CALLS[id]; }));
+    t.selectedId = s.selectedId && alive[s.selectedId] ? s.selectedId : null;
+    t.selectedRow = s.selectedRow && alive[s.selectedRow] ? s.selectedRow : null;
+    t.trail = (s.trail || []).filter(function (id) { return alive[id]; });
+    t.scroll = s.scroll || { left: 0, top: 0 };
+    t.needsHydrate = true;
+    tabs.set(s.root, t);
+  });
+  if (!tabs.size) return false;
+
+  const active = snap.activeRoot && tabs.has(snap.activeRoot) ? snap.activeRoot : snap.tabs[0].root;
+  loadTab(active);
+  return true;
+}
+
+/// 恢复出来的 tab 只有数据没有 DOM，切到它时才按 state 把卡片建出来
+function hydrateTab() {
+  const t = tabs.get(activeRoot);
+  if (!t || !t.needsHydrate) return;
+  t.needsHydrate = false;
+  Object.keys(state).forEach(function (id) {
+    if (NODES[id]) placeCard(id, parentOf[id]);
+  });
+  Object.keys(cardEls).forEach(function (id) {
+    renderCard(id);
+  });
+}
+
+function syncActiveTab() {
   if (!activeRoot) return;
   const t = tabs.get(activeRoot);
   if (!t) return;
@@ -888,6 +1023,11 @@ function saveTab() {
   t.nodes = Array.prototype.slice
     .call(world.children)
     .filter(function (el) { return el !== svg; });
+}
+
+function saveTab() {
+  syncActiveTab();
+  persistWorkspace();
 }
 
 // 把一张卡片带回视口左上角。画布是滚动容器，卡片坐标是 world 里的绝对坐标。
@@ -923,6 +1063,7 @@ function loadTab(rootId) {
     if (el !== svg) world.removeChild(el);
   });
   t.nodes.forEach(function (el) { world.appendChild(el); });
+  hydrateTab();
 
   refreshSelectionUI(selectedId);
   renderTrail();
@@ -1004,6 +1145,22 @@ async function bootProject(entriesOrRoot) {
   tabs.clear();
   activeRoot = null;
 
+  // 打开项目时先看有没有上次的工作区：有就按它重建，别再回默认入口
+  const wantsRestore = Array.isArray(entriesOrRoot)
+    ? entriesOrRoot.length > 0
+    : typeof entriesOrRoot === "string" && !!entriesOrRoot;
+  if (wantsRestore) {
+    try {
+      const snap = readWorkspace();
+      if (snap && (await restoreWorkspace(snap))) {
+        if (window.__clewRootOpened) window.__clewRootOpened(activeRoot);
+        return;
+      }
+    } catch (err) {
+      if (window.__clewLog) window.__clewLog("恢复工作区失败：" + err);
+    }
+  }
+
   const rootId = Array.isArray(entriesOrRoot)
     ? (ENTRIES.find(function (e) { return e && e.id; }) || {}).id
     : entriesOrRoot;
@@ -1035,6 +1192,7 @@ bootProject(ENTRIES).catch(function (err) {
 
 window.addEventListener("resize", function () { relayout(); });
 graph.addEventListener("scroll", draw);
+graph.addEventListener("scroll", function () { persistWorkspace(); });
 
 // 只有用户真的在卡片上点过东西，才算「用过」这张卡：光打开不算。
 // 用捕获阶段挂在画布上，卡片内部的任何点击都能收到，不用逐个绑。
