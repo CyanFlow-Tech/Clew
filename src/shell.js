@@ -334,6 +334,11 @@
       '<path d="M6 1.9L11.1 10.2H0.9L6 1.9z"/><path d="M6 4.7v2.3"/>' +
         '<circle cx="6" cy="8.6" r="0.45"/>',
     ),
+    gear: icon(
+      '<circle cx="6" cy="6" r="1.85"/>' +
+        '<path d="M6 1.5v1.2M6 9.3v1.2M1.5 6h1.2M9.3 6h1.2"/>' +
+        '<path d="M2.8 2.8l.85.85M8.35 8.35l.85.85M9.2 2.8l-.85.85M3.65 8.35l-.85.85"/>',
+    ),
   };
 
 
@@ -452,31 +457,37 @@
         <span><span class="t">Clew</span><br><span class="v">${VERSION}</span>
         <br><span class="auth">qingchu4n</span></span>
       </div>
-      <nav class="w-nav"><button class="active">项目</button></nav>
+      <nav class="w-nav">
+        <button class="active" data-w-pane="projects">项目</button>
+        <button data-w-pane="space">设置</button>
+      </nav>
       <div class="w-foot">调用图入口在文件菜单里</div>
     </aside>
     <main id="w-main">
-      <div class="w-toolbar">
-        <label class="w-search">
-          <input id="w-query" spellcheck="false" placeholder="搜索项目">
-        </label>
-        <div class="w-actions"><button id="w-open">打开新项目</button></div>
+      <div id="w-projects">
+        <div class="w-toolbar">
+          <label class="w-search">
+            <input id="w-query" spellcheck="false" placeholder="搜索项目">
+          </label>
+          <div class="w-actions"><button id="w-open">打开新项目</button></div>
+        </div>
+        <div id="w-note" hidden></div>
+        <div id="w-list">
+          <section class="w-sec">
+            <div class="w-sec-h">最近项目</div>
+            <ul id="w-recent"></ul>
+          </section>
+          <section class="w-sec" id="w-hidden-sec" hidden>
+            <button class="w-sec-h toggle" id="w-hidden-toggle" type="button">
+              <span class="chev">${ICON.chevronRight}</span>
+              <span>隐藏项目</span>
+              <span class="cnt" id="w-hidden-cnt"></span>
+            </button>
+            <ul id="w-hidden" hidden></ul>
+          </section>
+        </div>
       </div>
-      <div id="w-note" hidden></div>
-      <div id="w-list">
-        <section class="w-sec">
-          <div class="w-sec-h">最近项目</div>
-          <ul id="w-recent"></ul>
-        </section>
-        <section class="w-sec" id="w-hidden-sec" hidden>
-          <button class="w-sec-h toggle" id="w-hidden-toggle" type="button">
-            <span class="chev">${ICON.chevronRight}</span>
-            <span>隐藏项目</span>
-            <span class="cnt" id="w-hidden-cnt"></span>
-          </button>
-          <ul id="w-hidden" hidden></ul>
-        </section>
-      </div>
+      <div id="w-space" hidden></div>
     </main>`;
   // 先藏着：启动时可能直接打开上次的项目，不能先闪一下欢迎页
   welcome.hidden = true;
@@ -1751,7 +1762,8 @@
     return spStates[spView] || spStates.all;
   }
 
-  // 活动栏就是侧栏的 tab：一个符号树，一个搜索，点哪个切哪个
+  // 活动栏就是侧栏的 tab：一个符号树，一个搜索，点哪个切哪个。
+  // 最下面钉一个齿轮，进设置。
   const rail = document.createElement("div");
   rail.id = "side-rail";
   rail.innerHTML =
@@ -1759,8 +1771,236 @@
       ICON.folder + "</button>" +
     '<button type="button" class="rail-btn" data-tab="search" title="搜索">' +
       icon('<circle cx="5.2" cy="5.2" r="3.2"/><path d="M7.6 7.6l2.8 2.8"/>') +
-    "</button>";
+    "</button>" +
+    '<button type="button" class="rail-btn rail-pin" id="rail-settings" title="设置">' +
+      ICON.gear + "</button>";
   document.body.appendChild(rail);
+
+  // ── 设置 ────────────────────────────────────────────────────────
+  // 齿轮钉在活动栏最下面，点开一个弹窗：左边导航，右边内容。
+  // 欢迎页那边只放「项目空间」这一项，两边共用同一块内容组件，设置项不写两遍。
+  // 第一版只有项目空间一项；以后加项就在这里加导航按钮与对应面板。
+  const ST_TEXT = {
+    title: "设置",
+    section: "用户数据目录",
+    pathLabel: "路径",
+    migrate: "迁移",
+    migrating: "正在迁移",
+  };
+
+  const stStyle = document.createElement("style");
+  stStyle.textContent = `
+    #w-projects{flex:1;min-height:0;display:flex;flex-direction:column}
+    #w-projects[hidden]{display:none}
+    #w-space{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto}
+    #w-space[hidden]{display:none}
+
+    .rail-pin{margin-top:auto}
+
+    #settings{position:fixed;inset:0;z-index:120;display:grid;place-items:center;
+      background:#0b0d11cc}
+    #settings[hidden]{display:none}
+    .st-box{width:min(720px,86vw);height:min(460px,82vh);background:#161b22;
+      border:1px solid #2b2d30;border-radius:8px;box-shadow:0 18px 40px #0008;
+      display:flex;flex-direction:column;overflow:hidden;
+      font:12.5px/1.6 "Segoe UI",system-ui,sans-serif;color:#dfe1e5}
+    .st-bar{display:flex;align-items:center;height:38px;padding:0 6px 0 14px;
+      border-bottom:1px solid #2b2d30;flex:none}
+    .st-title{flex:1;font-size:13px}
+    .st-x{width:28px;height:28px;display:grid;place-items:center;background:none;
+      border:none;border-radius:4px;color:#8f939b;cursor:pointer}
+    .st-x:hover{background:#2b2d30;color:#dfe1e5}
+    .st-x svg{position:static;inset:auto;display:block;width:12px;height:12px}
+    .st-main{flex:1;display:flex;min-height:0}
+    .st-nav{width:168px;flex:none;border-right:1px solid #2b2d30;padding:8px 6px;
+      display:flex;flex-direction:column;gap:2px}
+    .st-nav-item{background:none;border:none;border-radius:6px;color:#dfe1e5;
+      font:inherit;text-align:left;padding:7px 10px;cursor:pointer}
+    .st-nav-item:hover{background:#2b2d30}
+    .st-nav-item.on{background:#2e436e;color:#e8edf7}
+    .st-content{flex:1;min-width:0;overflow:auto;padding:16px 18px}
+    .st-pane{display:flex;flex-direction:column;gap:14px}
+    .st-h{margin:0;font-size:13px;font-weight:600;color:#dfe1e5}
+    .st-field{display:flex;align-items:center;gap:8px}
+    .st-k{flex:none;color:#8f939b}
+    /* 路径框：透明底 + 下边框，看得出是个能点的框，又不至于像输入表单 */
+    .st-input{flex:1;min-width:0;background:transparent;border:none;
+      border-bottom:1px solid #33383f;border-radius:0;color:#dfe1e5;
+      font:inherit;padding:4px 2px;outline:none;cursor:pointer;
+      text-overflow:ellipsis}
+    .st-input:focus{border-bottom-color:#2e436e}
+    .st-btn{height:28px;padding:0 12px;border-radius:6px;border:1px solid #33383f;
+      background:#232529;color:#dfe1e5;font:inherit;cursor:pointer;flex:none}
+    .st-btn:hover:not(:disabled){background:#2b3037}
+    .st-btn:disabled{opacity:.45;cursor:default}
+    .st-note{color:#9aa1aa;line-height:1.6}
+    .st-note.err{color:#f0883e}
+    .st-note[hidden]{display:none}
+  `;
+  document.head.appendChild(stStyle);
+
+  /// 项目空间那块内容。每个容器各自一份实例，打开时重新读一次状态。
+  /// 迁移会换掉空间根，所以实例都记在这里，一个改完其余的一起刷新。
+  const spacePanes = [];
+
+  function spaceSettings() {
+    const box = document.createElement("div");
+    box.className = "st-pane";
+    box.innerHTML =
+      '<div class="st-h">' + ST_TEXT.section + "</div>" +
+      '<div class="st-field">' +
+        '<span class="st-k">' + ST_TEXT.pathLabel + "</span>" +
+        '<input class="st-input" data-k="path" readonly spellcheck="false">' +
+        '<button type="button" class="st-btn" data-k="migrate" disabled>' +
+        ST_TEXT.migrate + "</button></div>" +
+      '<div class="st-note" data-k="note" hidden></div>';
+
+    const pathEl = box.querySelector('[data-k="path"]');
+    const migrateBtn = box.querySelector('[data-k="migrate"]');
+    const noteEl = box.querySelector('[data-k="note"]');
+
+    // 一行只有一个路径：框里放的就是「要用哪个目录」，初始等于当前的空间根。
+    // 换了目录才需要迁移，所以按钮的可用性就看这两个值是否相等。
+    let home = "";
+    let picked = "";
+    let busy = false;
+
+    function setNote(text, isError) {
+      noteEl.textContent = text || "";
+      noteEl.hidden = !text;
+      noteEl.classList.toggle("err", !!isError);
+    }
+
+    function render() {
+      pathEl.value = picked || home;
+      pathEl.title = pathEl.value;
+      migrateBtn.disabled = busy || !picked || picked === home;
+      migrateBtn.textContent = busy ? ST_TEXT.migrating : ST_TEXT.migrate;
+    }
+
+    async function refresh() {
+      setNote("");
+      if (!desktop) {
+        home = "";
+        picked = "";
+        render();
+        setNote("浏览器预览没有后端，改不了这个目录", true);
+        return;
+      }
+      try {
+        const state = await api.invoke("space_state");
+        home = normPath(state.home);
+        picked = home;
+      } catch (err) {
+        setNote(String(err), true);
+      }
+      render();
+    }
+
+    async function pick() {
+      if (!desktop || busy) return;
+      let dir = null;
+      try {
+        dir = await window.__TAURI__.dialog.open({ directory: true, multiple: false });
+      } catch (err) {
+        setNote(String(err), true);
+        return;
+      }
+      if (!dir) return;
+      picked = normPath(dir);
+      setNote("");
+      render();
+    }
+
+    // 点框就是选目录：只有一个入口，不再摆一个按钮重复同一件事
+    pathEl.onclick = pick;
+
+    migrateBtn.onclick = async function () {
+      if (!desktop || !picked || busy || picked === home) return;
+      busy = true;
+      setNote("");
+      render();
+      try {
+        const report = await api.invoke("migrate_space", { target: picked });
+        home = normPath(report.home);
+        picked = home;
+        // 别的容器（欢迎页那份）也要跟着换过来
+        for (const other of spacePanes) {
+          if (other !== handle) other.refresh();
+        }
+      } catch (err) {
+        setNote(String(err), true);
+      } finally {
+        busy = false;
+        render();
+      }
+    };
+
+    render();
+    const handle = { el: box, refresh: refresh };
+    spacePanes.push(handle);
+    return handle;
+  }
+
+  // 弹窗：欢迎页与主窗口共用
+  const settingsModal = document.createElement("div");
+  settingsModal.id = "settings";
+  settingsModal.hidden = true;
+  settingsModal.innerHTML =
+    '<div class="st-box">' +
+      '<div class="st-bar"><span class="st-title">' + ST_TEXT.title + "</span>" +
+        '<button type="button" class="st-x" data-k="close">' + ICON.close + "</button></div>" +
+      '<div class="st-main">' +
+        '<nav class="st-nav"><button type="button" class="st-nav-item on">' +
+          ST_TEXT.section + "</button></nav>" +
+        '<div class="st-content"></div>' +
+      "</div>" +
+    "</div>";
+  document.body.appendChild(settingsModal);
+
+  const modalPane = spaceSettings();
+  settingsModal.querySelector(".st-content").appendChild(modalPane.el);
+  settingsModal.querySelector('[data-k="close"]').onclick = closeSettings;
+  settingsModal.addEventListener("click", function (e) {
+    if (e.target === settingsModal) closeSettings();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !settingsModal.hidden) closeSettings();
+  });
+
+  function openSettings() {
+    settingsModal.hidden = false;
+    modalPane.refresh();
+  }
+
+  function closeSettings() {
+    settingsModal.hidden = true;
+  }
+
+  // 活动栏的齿轮：它不是 tab，别带 data-tab，否则会被面板的切换逻辑收走
+  rail.querySelector("#rail-settings").onclick = openSettings;
+
+  // 欢迎页：只搬「项目空间」这一项，不铺整张设置表
+  const wProjects = welcome.querySelector("#w-projects");
+  const wSpace = welcome.querySelector("#w-space");
+  const welcomePane = spaceSettings();
+  wSpace.appendChild(welcomePane.el);
+
+  function showWelcomePane(name) {
+    const onSpace = name === "space";
+    wProjects.hidden = onSpace;
+    wSpace.hidden = !onSpace;
+    for (const btn of welcome.querySelectorAll(".w-nav button")) {
+      btn.classList.toggle("active", btn.dataset.wPane === name);
+    }
+    if (onSpace) welcomePane.refresh();
+  }
+
+  for (const btn of welcome.querySelectorAll(".w-nav button")) {
+    btn.onclick = function () {
+      showWelcomePane(btn.dataset.wPane);
+    };
+  }
 
   const side = document.createElement("div");
   side.id = "side-panel";

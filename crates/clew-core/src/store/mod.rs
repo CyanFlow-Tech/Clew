@@ -80,4 +80,35 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    /// 迁移是「库还开着的时候复制文件」：先确认 SQLite 的句柄不挡复制，
+    /// 再确认复制出来那份能打开、表还在。WAL 要先收进主库，否则 -wal 里的
+    /// 数据不跟着走。
+    #[test]
+    fn the_index_can_be_copied_while_open() {
+        let dir = std::env::temp_dir().join(format!("clew-copy-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let db = dir.join("index.db");
+        let conn = open(&db).expect("open");
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+
+        let copy = dir.join("copy.db");
+        std::fs::copy(&db, &copy).expect("copy while the connection is still open");
+
+        let opened = open(&copy).expect("open the copy");
+        let tables: i64 = opened
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(tables >= 16, "copy lost tables: {tables}");
+
+        drop(opened);
+        drop(conn);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

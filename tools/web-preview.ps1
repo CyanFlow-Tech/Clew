@@ -18,7 +18,6 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $web = Join-Path $repo "target\web"
 $manifest = Join-Path $repo "Cargo.toml"
-$db = Join-Path (Resolve-Path $Project) ".clew\index.db"
 
 New-Item -ItemType Directory -Force -Path $web | Out-Null
 Copy-Item (Join-Path $repo "src\index.html") $web -Force
@@ -30,7 +29,9 @@ foreach ($extra in @("shell.js", "logo.png", "themes.js")) {
 # 第三方前端库：预览和桌面端读同一份文件，别让预览退化成无高亮
 Copy-Item (Join-Path $repo "src\vendor") $web -Recurse -Force
 
-if (-not (Test-Path $db)) {
+# 索引在项目空间里，路径不再拼得出来：问 CLI 要一份，读不到就扫一次
+$probe = & cargo @("run", "-q", "--manifest-path", $manifest, "-p", "clew-cli", "--", "stats", $Project) 2>&1
+if ($LASTEXITCODE -ne 0) {
   Write-Host "no index yet, scanning once..."
   cargo @("run", "-q", "--manifest-path", $manifest, "-p", "clew-cli", "--", "scan", $Project)
 }

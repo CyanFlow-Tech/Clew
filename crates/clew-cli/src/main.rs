@@ -17,9 +17,10 @@ enum Command {
     Scan {
         /// Project root
         project: PathBuf,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
         /// Also index .venv / venv / env
         #[arg(long)]
         include_venv: bool,
@@ -31,17 +32,19 @@ enum Command {
     Entries {
         /// Project root
         project: PathBuf,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Print index counters read back from the database
     Stats {
         /// Project root
         project: PathBuf,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Show the argument bindings of the calls on one line of one function
     Args {
@@ -51,17 +54,19 @@ enum Command {
         qualname: String,
         /// 1-based line number
         line: i64,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// List every indexed file, the way the entry panel's file tree sees them
     Files {
         /// Project root
         project: PathBuf,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// List the definitions of one file
     Symbols {
@@ -69,9 +74,10 @@ enum Command {
         project: PathBuf,
         /// Module name, e.g. `pkg.sub.mod`
         module: String,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Print the sidebar symbol tree: every file and the definitions inside it
     Tree {
@@ -83,9 +89,10 @@ enum Command {
         /// How many outline rows to print
         #[arg(long, default_value = "60")]
         rows: usize,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Substring search over paths and definition names (the sidebar's search)
     FindSyms {
@@ -103,9 +110,10 @@ enum Command {
         /// Rows per page
         #[arg(long, default_value = "50")]
         size: usize,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Search definitions. Use `prefix:name`, `prefix:`, `:name` or bare text
     Search {
@@ -119,9 +127,10 @@ enum Command {
         /// Module to boost, usually the one being read
         #[arg(long)]
         ctx: Option<String>,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
         /// Print the page as JSON instead of a table
         #[arg(long)]
         json: bool,
@@ -132,9 +141,10 @@ enum Command {
         project: PathBuf,
         /// Search text
         q: String,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Walk the call graph from an entry point
     Walk {
@@ -144,9 +154,10 @@ enum Command {
         /// picking an entry point
         #[arg(long)]
         entry: Option<String>,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Write the whole graph as JSON, for opening the UI in a plain browser
     Export {
@@ -155,9 +166,10 @@ enum Command {
         /// Output path; relative paths resolve against the current directory
         #[arg(long, short)]
         out: PathBuf,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Materialise module cards on demand (what a click does in the GUI)
     Materialize {
@@ -165,9 +177,10 @@ enum Command {
         project: PathBuf,
         /// Module names, e.g. `pkg.sub.mod`
         modules: Vec<String>,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Measure what opening a project costs when cards are read on demand
     Bench {
@@ -176,17 +189,19 @@ enum Command {
         /// How many expansions to simulate along the first resolvable call
         #[arg(long, default_value = "100")]
         steps: usize,
-        /// Index path; relative paths resolve against the project root
-        #[arg(long, default_value = ".clew/index.db")]
-        db: PathBuf,
+        /// Index path; defaults to the project space, relative paths resolve
+        /// against the project root
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
 }
 
-fn resolve(root: &Path, db: PathBuf) -> PathBuf {
-    if db.is_absolute() {
-        db
-    } else {
-        root.join(db)
+/// 没给 `--db` 就用项目空间里的库，给了就按项目根解析相对路径。
+fn resolve(root: &Path, db: Option<PathBuf>) -> PathBuf {
+    match db {
+        Some(path) if path.is_absolute() => path,
+        Some(path) => root.join(path),
+        None => clew_core::space::db_path(root),
     }
 }
 
@@ -195,7 +210,7 @@ fn display(path: &Path) -> String {
 }
 
 /// Open the index of an already-scanned project.
-fn open_index(root: &Path, db: PathBuf) -> anyhow::Result<(clew_core::store::Conn, i64)> {
+fn open_index(root: &Path, db: Option<PathBuf>) -> anyhow::Result<(clew_core::store::Conn, i64)> {
     let db_path = resolve(root, db);
     match clew_core::store::open_index(&db_path, root)? {
         Some(pair) => Ok(pair),

@@ -8,6 +8,7 @@ use walkdir::WalkDir;
 const SKIP_DIRS: &[&str] = &[
     ".git",
     ".clew",
+    ".clew-home",
     ".venv",
     "venv",
     "env",

@@ -23,7 +23,7 @@ use clew_core::snapshot::{self, CardsPayload, Entry};
 use clew_core::store::{self, Conn, repo};
 use clew_core::walk;
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::State;
 
 /// Process start, so every stage can print an absolute offset from launch.
 static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -95,7 +95,7 @@ struct ScanStatus {
 fn open_ready(path: &Path) -> Result<(Index, OpenResult), String> {
     let t_open = Instant::now();
     let root = std::fs::canonicalize(path).map_err(|e| format!("打不开这个目录：{e}"))?;
-    let db = root.join(".clew").join("index.db");
+    let db = clew_core::space::db_path(&root);
 
     let t_index = Instant::now();
     let (conn, project_id) = store::open_index(&db, &root)
@@ -169,10 +169,10 @@ fn spawn_scan(root: PathBuf) -> Arc<ScanJob> {
     });
 
     std::thread::spawn(move || {
-        let clew_dir = root.join(".clew");
-        let db = clew_dir.join("index.db");
+        let project_dir = clew_core::space::project_dir(&root);
+        let db = project_dir.join("index.db");
         let result = (|| -> Result<(), String> {
-            std::fs::create_dir_all(&clew_dir).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(&project_dir).map_err(|e| e.to_string())?;
             let mut conn = store::open(&db).map_err(|e| e.to_string())?;
             let stats = clew_core::scan::run::scan_with(
                 &mut conn,
@@ -194,7 +194,7 @@ fn spawn_scan(root: PathBuf) -> Arc<ScanJob> {
             .map_err(|e| format!("建索引失败：{e}"))?;
             if stats.modules == 0 {
                 drop(conn);
-                let _ = std::fs::remove_dir_all(&clew_dir);
+                let _ = std::fs::remove_dir_all(&project_dir);
                 return Err(format!("{} 里没有 Python 文件", root.display()));
             }
             eprintln!(
@@ -223,7 +223,7 @@ fn spawn_scan(root: PathBuf) -> Arc<ScanJob> {
 fn open_project(path: String, state: State<'_, AppState>) -> Result<OpenResult, String> {
     let root = std::fs::canonicalize(Path::new(&path))
         .map_err(|e| format!("打不开这个目录：{e}"))?;
-    let db = root.join(".clew").join("index.db");
+    let db = clew_core::space::db_path(&root);
 
     // 索引能用就直接开。只判断库文件在不在是不够的：中断的扫描会留下一个
     // 空库，那样会把「没有索引」误报成有索引。
@@ -251,9 +251,11 @@ fn open_project(path: String, state: State<'_, AppState>) -> Result<OpenResult, 
         }
     }
 
-    // 残留的库没有可用索引，删掉重建，免得 scan 在半个库上继续写
-    if root.join(".clew").exists() {
-        let _ = std::fs::remove_dir_all(root.join(".clew"));
+    // 残留的库没有可用索引，删掉重建，免得 scan 在半个库上继续写。
+    // 删的是项目空间里的目录，不动被阅读的项目。
+    let space_dir = clew_core::space::project_dir(&root);
+    if space_dir.exists() {
+        let _ = std::fs::remove_dir_all(&space_dir);
     }
 
     let job = spawn_scan(root.clone());
@@ -332,20 +334,15 @@ fn check_paths(paths: Vec<String>) -> Vec<bool> {
 
 /// Drop a project's index. The connection is released first, otherwise Windows
 /// keeps the database file open and the directory cannot be removed.
+///
+/// 库在项目空间里，所以被阅读的目录已经删掉了也要照样清；这时拿不到规范化
+/// 路径，`space::project_id` 会退回原路径继续算，算出的目录还是同一个。
 #[tauri::command]
 fn delete_index(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let dir = Path::new(&path).join(".clew");
+    let target = Path::new(&path);
+    let dir = clew_core::space::project_dir(target);
 
-    // 目录本身已经不在了，索引跟着一起没了，只剩历史记录要清
-    if !Path::new(&path).exists() {
-        eprintln!("[t] delete_index skipped, missing {}", path);
-        return Ok(());
-    }
-
-    let root = std::fs::canonicalize(Path::new(&path))
-        .map_err(|e| format!("打不开这个目录：{e}"))?;
-
-    {
+    if let Ok(root) = std::fs::canonicalize(target) {
         let mut guard = index_guard(&state);
         if guard.as_ref().map(|i| i.root.as_path()) == Some(root.as_path()) {
             *guard = None;
@@ -355,6 +352,8 @@ fn delete_index(path: String, state: State<'_, AppState>) -> Result<(), String> 
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("删不掉索引目录：{e}"))?;
         eprintln!("[t] delete_index removed {}", dir.display());
+    } else {
+        eprintln!("[t] delete_index found nothing at {}", dir.display());
     }
     Ok(())
 }
@@ -598,12 +597,9 @@ fn scan_guard<'a>(state: &'a State<'_, AppState>) -> std::sync::MutexGuard<'a, O
 }
 
 
-/// 收藏与最近使用的文件位置：应用数据目录，不跟索引一起删。
-fn roots_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("找不到应用数据目录：{e}"))?;
+/// 收藏与最近使用的位置：项目空间里，不跟索引一起删，也不写进被阅读的项目。
+fn roots_path() -> Result<PathBuf, String> {
+    let dir = clew_core::space::home();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("roots.json"))
 }
@@ -611,7 +607,6 @@ fn roots_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// 用户自己的入口：收藏与最近使用。读改写放在 roots::Store，锁在这里。
 #[tauri::command]
 fn roots(
-    app: tauri::AppHandle,
     project: String,
     action: String,
     card_id: Option<String>,
@@ -620,16 +615,134 @@ fn roots(
     // 整份文件是「读、改、写回」，两个 invoke 撞一起就会互相覆盖，
     // 表现是刚收藏的东西下次打开不见了
     let _guard = state.roots.lock().unwrap_or_else(|e| e.into_inner());
-    let store = roots::Store::new(roots_path(&app)?);
+    let store = roots::Store::new(roots_path()?);
     store
         .apply(&project, &action, card_id.as_deref())
         .map(|(out, _)| out)
 }
 
-/// 应用数据目录，日志和入口记录都放这里。
+/// 空间根在哪里，界面用来显示当前设置。
+#[derive(serde::Serialize)]
+struct SpaceState {
+    home: String,
+    default_home: String,
+    pointer: String,
+    is_default: bool,
+}
+
+#[tauri::command]
+fn space_state() -> SpaceState {
+    let home = clew_core::space::home();
+    let default_home = clew_core::space::default_home();
+    SpaceState {
+        is_default: home == default_home,
+        home: home.display().to_string(),
+        default_home: default_home.display().to_string(),
+        pointer: clew_core::space::pointer_path().display().to_string(),
+    }
+}
+
+/// 迁移结果，界面只用来把按钮变灰，不显示数字。
+#[derive(serde::Serialize)]
+struct SpaceReport {
+    home: String,
+    files: usize,
+    bytes: u64,
+    items: Vec<String>,
+}
+
+/// 把空间搬到 `target`：目标必须为空，搬完写指针，再清旧空间的注册项。
+///
+/// 迁移前要放掉已打开的项目，否则 Windows 占着库文件，复制出来的是半份。
+#[tauri::command]
+fn migrate_space(target: String, state: State<'_, AppState>) -> Result<SpaceReport, String> {
+    {
+        let scan = scan_guard(&state);
+        if scan
+            .as_ref()
+            .is_some_and(|job| !job.finished.load(Ordering::SeqCst))
+        {
+            return Err("索引还在建立，等它完成再迁移".to_string());
+        }
+    }
+
+    let from = clew_core::space::home();
+    let to = PathBuf::from(&target);
+    clew_core::space::ensure_empty_target(&to)?;
+
+    // 复制前把 WAL 收进主库：迁移搬的是目录，别让 -wal 里还压着没落盘的数据
+    {
+        let guard = index_guard(&state);
+        if let Some(index) = guard.as_ref() {
+            if let Err(err) = index
+                .mat
+                .conn()
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            {
+                append_log("space", &format!("wal checkpoint failed: {err}"));
+            }
+        }
+    }
+
+    // 复制时库文件还开着：SQLite 允许别的句柄读，复制不会被打断
+    let report = clew_core::space::migrate(&from, &to).map_err(|e| e.to_string())?;
+
+    // 复制完再松手：旧库的句柄挡着删目录
+    let root = {
+        let mut guard = index_guard(&state);
+        guard.take().map(|index| index.root.clone())
+    };
+
+    clew_core::space::set_home(&to).map_err(|e| format!("写不了空间指针：{e}"))?;
+
+    // 用新空间里刚搬过去的库重新打开：界面还停在原来那个项目上，
+    // 迁移不该把人踢回欢迎页
+    if let Some(root) = root {
+        match open_ready(&root) {
+            Ok((index, _)) => remember(&state, index)?,
+            Err(err) => {
+                // 新库打不开：指针退回旧空间，清掉新空间里刚复制的那份，
+                // 免得下次迁移又卡在「目标非空」
+                let _ = clew_core::space::set_home(&from);
+                let _ = clew_core::space::clear_entries(&to);
+                let _ = std::fs::remove_dir(&to);
+                // 旧库还在，把项目重新挂上，界面不至于变成「没打开项目」
+                if let Ok((index, _)) = open_ready(&root) {
+                    let _ = remember(&state, index);
+                }
+                return Err(format!("新空间里的索引打不开：{err}"));
+            }
+        }
+    }
+
+    // 旧空间只清注册项和我们自己的日志；用户自己放进去的东西不动
+    if let Err(err) = clew_core::space::clear_entries(&from) {
+        append_log("space", &format!("clear old space failed: {err}"));
+    }
+    let _ = std::fs::remove_file(from.join("clew.log"));
+    if let Err(err) = clew_core::space::remove_dir_if_empty(&from) {
+        append_log("space", &format!("remove old space dir failed: {err}"));
+    }
+
+    eprintln!(
+        "[t] migrate_space {} -> {} files={} bytes={}",
+        from.display(),
+        to.display(),
+        report.files,
+        report.bytes
+    );
+
+    Ok(SpaceReport {
+        home: to.display().to_string(),
+        files: report.files,
+        bytes: report.bytes,
+        items: report.items,
+    })
+}
+
+/// 项目空间根，日志也落在这里。
 fn data_dir() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    Path::new(&base).join("tech.cyanflow.clew")
+    clew_core::space::home()
 }
 
 /// 追加一行日志。窗口程序没有控制台，出错时只剩「点了没反应」，
@@ -689,6 +802,8 @@ fn main() {
             search_symbols,
             tree,
             roots,
+            space_state,
+            migrate_space,
             open_project,
             boot,
             scan_status,
