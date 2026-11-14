@@ -102,7 +102,7 @@ $stub = @'
       window.__STUB_RECENT__ = [];
       window.__STUB_ROOTS_READY__ = false;
       window.__STUB_ROOTS_WAITERS__ = [];
-      window.__STUB_ENTRIES__ = [{ id: "reference.Arena:playGame", label: "reference.Arena:playGame" }];
+      window.__STUB_ENTRIES__ = [{ id: "reference.Arena:Arena", label: "reference.Arena:Arena" }];
 '@
 
 $html = Get-Content (Join-Path $root "src\index.html") -Raw
@@ -265,6 +265,27 @@ $check = @'
   await wait(400);
   out.root = window.getActiveRoot ? window.getActiveRoot() : null;
   out.selected = document.querySelectorAll("#sp-list .sp-row.sel").length;
+
+  // 收藏状态同步：卡片那侧点收藏，树上的星要立刻变，不能靠重画整棵树
+  S.setView("all");
+  await wait(300);
+  const favRow = Array.from(document.querySelectorAll("#sp-list .sp-row")).find(
+    (el) => el.dataset.card && el.querySelector("[data-fav]")
+  );
+  if (favRow) {
+    const id = favRow.dataset.card;
+    const before = favRow.querySelector("[data-fav]").classList.contains("on");
+    await window.__clewToggleFavorite(id);
+    await wait(300);
+    const after = document.querySelector('#sp-list [data-fav="' + id + '"]');
+    out.favSync = {
+      id: id,
+      flipped: after ? after.classList.contains("on") !== before : null,
+      listRowsUnchanged: rows().length === favRow.parentElement.childElementCount
+    };
+    await window.__clewToggleFavorite(id);
+    await wait(200);
+  }
 
   S.toggle(false);
   await wait(300);

@@ -478,6 +478,8 @@
         </section>
       </div>
     </main>`;
+  // 先藏着：启动时可能直接打开上次的项目，不能先闪一下欢迎页
+  welcome.hidden = true;
   document.body.appendChild(welcome);
   // 侧栏用同一张位图的放大版，标题栏是 20px，这里 36px 由 CSS 接管
   welcome.querySelector(".w-brand .tb-brand").innerHTML =
@@ -1252,9 +1254,33 @@
     }, 400);
   }
 
+  // 上次开着的项目：没主动关闭的话，下次启动直接打开它
+  const LAST_KEY = "clew.lastProject";
+
+  /// 读这个项目的收藏与最近使用。命令行启动不经过 enterProject、
+  /// 自动重开也不经过启动块，所以两处都要能调。
+  function loadRoots() {
+    if (!desktop || !currentPath) return;
+    api.invoke("roots", { project: currentPath, action: "get" })
+      .then(function (d) {
+        rootData = d || { favorites: [], recent: [] };
+        favorites.sync(rootData.favorites);
+        if (sideOpen) spRender();
+      })
+      .catch(function () {});
+  }
+
   function enterProject(path) {
     currentPath = normPath(path);
+    // 画布的工作区快照按项目分开存，app.js 用这个 key
+    window.__CLEW_PROJECT__ = currentPath;
     remember(path);
+    try {
+      localStorage.setItem(LAST_KEY, currentPath);
+    } catch (err) {
+      /* 隐私模式写不进就算了 */
+    }
+    loadRoots();
     // 主动打开的项目不该继续留在隐藏区
     setHidden(path, false);
     renderProjectButton();
@@ -1358,6 +1384,13 @@
     setMenuMode(false);
     bootProject([]);
     currentPath = null;
+    window.__CLEW_PROJECT__ = null;
+    try {
+      // 主动关掉的项目，下次不再自动打开
+      localStorage.removeItem(LAST_KEY);
+    } catch (err) {
+      /* 读不到 localStorage 就算了 */
+    }
     renderProjectButton();
     setStatus("");
     showWelcome();
@@ -1368,20 +1401,57 @@
   if (currentPath) remember(currentPath);
   renderProjectButton();
 
-  // 命令行带进来的项目若还没索引，一样先进界面再等索引
-  const bootInfo = window.__CLEW_BOOT_INFO__;
-  if (bootInfo && bootInfo.state === "indexing") {
-    hideWelcome();
-    watchScan(bootInfo.root);
-  } else {
+  // 启动顺序：命令行带的项目 > 上次没关掉的项目 > 欢迎页
+  (async function startup() {
+    const bootInfo = window.__CLEW_BOOT_INFO__;
+    // 命令行启动不经过 enterProject，这里补一次，否则下次不带参数就进不去
+    if (currentPath) {
+      try {
+        localStorage.setItem(LAST_KEY, currentPath);
+      } catch (err) {
+        /* 写不进就算了 */
+      }
+    }
+    if (bootInfo && bootInfo.state === "indexing") {
+      hideWelcome();
+      watchScan(bootInfo.root);
+      return;
+    }
     // 预览模式没有项目路径，只要图里有入口就直接进画布
     const hasGraph = typeof ENTRIES !== "undefined" && ENTRIES.length > 0;
     if ((currentPath || !desktop) && hasGraph) {
       hideWelcome();
-    } else {
-      showWelcome();
+      return;
     }
-  }
+    if (desktop && !currentPath) {
+      let last = null;
+      try {
+        last = localStorage.getItem(LAST_KEY);
+      } catch (err) {
+        /* 读不到就当没有 */
+      }
+      if (last) {
+        // 目录可能已经被删掉了，先问一句再决定进不进
+        let alive = false;
+        try {
+          const rows = await api.invoke("check_paths", { paths: [last] });
+          alive = !!(rows && rows[0]);
+        } catch (err) {
+          alive = false;
+        }
+        if (alive) {
+          await openPath(last);
+          return;
+        }
+        try {
+          localStorage.removeItem(LAST_KEY);
+        } catch (err) {
+          /* 无所谓的清理 */
+        }
+      }
+    }
+    showWelcome();
+  })();
 
   // ── 入口面板 ────────────────────────────────────────────────────
   // 收藏标记统一用五角星：未收藏描边，收藏后填色（见 .flag.on path{fill}）。
@@ -1435,6 +1505,34 @@
   }
 
 
+  // ── 收藏状态 ────────────────────────────────────────────────────
+  // 单一真源 + 订阅：谁要显示收藏状态就读 favorites.has(id)，收藏变了
+  // 只广播「哪个 id 变了」，各视图自己决定怎么最小更新，互不认识。
+  // 早先是每个视图各自去 rootData.favorites 里 indexOf，加一个视图就得
+  // 记得去补一处通知，漏掉就不同步。
+  const favorites = {
+    set: new Set(),
+    subs: [],
+    sync(list) {
+      favorites.set = new Set(list || []);
+    },
+    has(id) {
+      return !!id && favorites.set.has(id);
+    },
+    subscribe(fn) {
+      favorites.subs.push(fn);
+    },
+    emit(id) {
+      favorites.subs.forEach(function (fn) {
+        try {
+          fn(id);
+        } catch (err) {
+          if (window.__clewLog) window.__clewLog("favorites 订阅者出错：" + err);
+        }
+      });
+    },
+  };
+
   async function toggleFavorite(id) {
     if (!desktop || !currentPath) return;
     try {
@@ -1446,14 +1544,13 @@
     } catch (err) {
       return;
     }
-    if (spView === "fav") spRender();
-    if (sideTab === "search") spSearchRender();
-    if (window.__clewRefreshCard) window.__clewRefreshCard(id);
+    favorites.sync(rootData.favorites);
+    favorites.emit(id);
   }
 
   // 卡片头上的旗标按钮走这两个口
   window.__clewIsFavorite = function (id) {
-    return !!id && rootData.favorites.indexOf(id) >= 0;
+    return favorites.has(id);
   };
   window.__clewToggleFavorite = function (id) {
     return toggleFavorite(id);
@@ -1486,13 +1583,7 @@
 
 
   // 启动时先把收藏读出来，卡片头上的旗标才有正确的初始状态
-  if (desktop && currentPath) {
-    api.invoke("roots", { project: currentPath, action: "get" })
-      .then(function (d) {
-        rootData = d;
-      })
-      .catch(function () {});
-  }
+  loadRoots();
 
 
   // ── 侧边栏：符号树 ──────────────────────────────────────────────
@@ -2156,7 +2247,7 @@
 
     const active = window.getActiveRoot ? window.getActiveRoot() : null;
     if (active && active === r.card) el.classList.add("sel");
-    const star = (rootData.favorites || []).indexOf(r.card) >= 0;
+    const star = favorites.has(r.card);
     const flagHtml =
       '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(r.card) +
       '" title="标记入口">' + FLAG_SVG + "</span>";
@@ -2530,6 +2621,23 @@
     sideTab = tab;
     applyTab();
     setSideOpen(true);
+  });
+
+  // 收藏变化后的最小更新：三处视图各自认领，谁也不调谁
+  favorites.subscribe(function (id) {
+    const sel = '[data-fav="' + String(id).replace(/"/g, '\\"') + '"]';
+    const on = favorites.has(id);
+    [spList, spListSearch].forEach(function (host) {
+      if (!host) return;
+      Array.prototype.forEach.call(host.querySelectorAll(sel), function (el) {
+        el.classList.toggle("on", on);
+        el.classList.toggle("off", !on);
+      });
+    });
+    // 收藏夹是个列表，条目会增删，只能重画
+    if (spView === "fav") spRender();
+    // 卡片头那颗星
+    if (window.__clewRefreshCard) window.__clewRefreshCard(id);
   });
 
   async function onTreeClick(e) {
