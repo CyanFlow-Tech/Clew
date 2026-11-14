@@ -58,20 +58,35 @@ Clew 是 Python 项目的入口地图。Rust 后端用 tree-sitter 解析，数�
 仓库历史就是这个格式，新提交照着写。写之前 `git log` 看两条，别按自己的习惯来。
 
 ```
-feat(scan): resolve calls via imports and receivers
+feat(ui): add settings for where Clew keeps its data
 
-Three separate holes made a call point at an unrelated definition.
+Files:
+- src-tauri/src/main.rs: builds the window in setup, adds the settings
+  commands.
+- src/shell.js: settings dialog and the gear on the activity rail.
 
-A relative import inside a package `__init__.py` lost one level: the base
-unconditionally dropped the current module name, so …
+Effects:
+- WebView2 stops writing under %LOCALAPPDATA%.
+
+What changed:
+1. The data directory and the interface cache are configurable.
+2. One page with two blocks; "default" only fills in the path.
+
+Tests:
+- cargo test -p clew-core.
+- tools/settings-check.ps1.
 ```
 
 - 全英文。单行 subject，空一行，然后 body。
 - subject：`type(scope): ` 加一句祈使句，小写开头，不加句号，60 字符以内。type 用 `feat` / `fix` / `perf` / `refactor` / `chore` / `docs`；scope 用模块名，比如 `ui`、`scan`、`search`、`core`、`cli`。
-- body 用完整句子分段，讲清楚：原来错在哪、为什么这么改、放弃了什么。不要「1. 2. 3.」要点列表，不要流水账，不要写「我」。
+- body 四段，顺序固定：
+  1. `Files:` 逐条列改动的文件，每条一句说这个文件改了什么。
+  2. `Effects:` 对用户可见的影响。没有就不写这一段。
+  3. `What changed:` 分点写这次改了什么，一点一句，别写成散文。
+  4. `Tests:` 跑了什么，有就写，没有就不写这一段。
+- 短句优先。不写「我」，不写流水账，不复述 diff。
 - 手工折行，每行 75 列左右。
-- 有测试就在 body 末尾单独一段，以 `Tests:` 开头。
-- 一个提交只讲一件事。混进了别的工作，在 body 里单独一段交代它是什么、为什么一起进来，别让读 log 的人自己去猜。
+- 一个提交只讲一件事。混进了别的工作，在 `What changed` 里单独一点交代它是什么、为什么一起进来。
 - 不写 emoji，不写 `Co-authored-by`。
 
 提交前把改动看一遍（`git status`、`git diff --stat`），确认 `prototype/tree-data.js` 这类导出数据没被带进去。推送要单独说，默认只提交到本地。
