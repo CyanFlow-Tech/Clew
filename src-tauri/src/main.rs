@@ -10,18 +10,19 @@ compile_error!(
     "release 构建要带前端资源：cargo build -p clew-app --release --features custom-protocol，或直接用 `cargo app`"
 );
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+mod roots;
 
 use clew_core::scan::materialize::Materializer;
 use clew_core::scan::progress::Progress;
 use clew_core::snapshot::{self, CardsPayload, Entry};
 use clew_core::store::{self, Conn, repo};
 use clew_core::walk;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{Manager, State};
 
 /// Process start, so every stage can print an absolute offset from launch.
@@ -54,6 +55,9 @@ struct ScanJob {
 struct AppState {
     index: Mutex<Option<Index>>,
     scan: Mutex<Option<Arc<ScanJob>>>,
+    /// roots.json 是「读整个文件、改、写回」，两个 invoke 撞一起就会互相覆盖，
+    /// 表现是刚收藏的东西下一次打开不见了
+    roots: Mutex<()>,
 }
 
 /// One answer to "open this project": either the index is ready, or a scan is
@@ -594,21 +598,7 @@ fn scan_guard<'a>(state: &'a State<'_, AppState>) -> std::sync::MutexGuard<'a, O
 }
 
 
-/// 用户自己的入口：收藏与最近打开，存在应用数据目录，不跟索引一起删。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct ProjectRoots {
-    #[serde(default)]
-    favorites: Vec<String>,
-    #[serde(default)]
-    recent: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct RootsFile {
-    #[serde(default)]
-    projects: BTreeMap<String, ProjectRoots>,
-}
-
+/// 收藏与最近使用的文件位置：应用数据目录，不跟索引一起删。
 fn roots_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -618,52 +608,22 @@ fn roots_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("roots.json"))
 }
 
-fn read_roots(app: &tauri::AppHandle) -> Result<RootsFile, String> {
-    let path = roots_path(app)?;
-    match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("roots.json 读不出来：{e}")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(RootsFile::default()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-fn write_roots(app: &tauri::AppHandle, data: &RootsFile) -> Result<(), String> {
-    let path = roots_path(app)?;
-    let text = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| e.to_string())
-}
-
+/// 用户自己的入口：收藏与最近使用。读改写放在 roots::Store，锁在这里。
 #[tauri::command]
 fn roots(
     app: tauri::AppHandle,
     project: String,
     action: String,
     card_id: Option<String>,
-) -> Result<ProjectRoots, String> {
-    let mut data = read_roots(&app)?;
-    let entry = data.projects.entry(project).or_default();
-
-    match action.as_str() {
-        "toggle" => {
-            let id = card_id.ok_or("缺少 card_id")?;
-            if let Some(pos) = entry.favorites.iter().position(|x| *x == id) {
-                entry.favorites.remove(pos);
-            } else {
-                entry.favorites.push(id);
-            }
-        }
-        "recent" => {
-            let id = card_id.ok_or("缺少 card_id")?;
-            entry.recent.retain(|x| *x != id);
-            entry.recent.insert(0, id);
-            entry.recent.truncate(12);
-        }
-        _ => {}
-    }
-
-    let out = entry.clone();
-    write_roots(&app, &data)?;
-    Ok(out)
+    state: State<'_, AppState>,
+) -> Result<roots::ProjectRoots, String> {
+    // 整份文件是「读、改、写回」，两个 invoke 撞一起就会互相覆盖，
+    // 表现是刚收藏的东西下次打开不见了
+    let _guard = state.roots.lock().unwrap_or_else(|e| e.into_inner());
+    let store = roots::Store::new(roots_path(&app)?);
+    store
+        .apply(&project, &action, card_id.as_deref())
+        .map(|(out, _)| out)
 }
 
 /// 应用数据目录，日志和入口记录都放这里。
