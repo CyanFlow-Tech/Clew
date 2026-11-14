@@ -31,8 +31,16 @@
   (function hotReload() {
     const host = location.hostname;
     if (host !== "127.0.0.1" && host !== "localhost") return;
-    // 四个文件都要盯：只盯 shell.js 的话，改了 app.js 页面不会自己刷
-    const FILES = ["index.html", "app.js", "shell.js", "themes.js"];
+    // 图标资源三件套 + 四个页面脚本：改了任何一个都要整页重载
+    const FILES = [
+      "index.html",
+      "app.js",
+      "shell.js",
+      "themes.js",
+      "vendor/icons.js",
+      "vendor/icons-antd.js",
+      "vendor/icons-material.js",
+    ];
     let stamp = null;
     setInterval(function () {
       Promise.all(
@@ -111,7 +119,7 @@
       display:grid;place-items:center}
     /* 页面里有一条给画布连线用的 svg{position:absolute;inset:0} 全局规则，
        图标里的 svg 必须显式回到行内盒，否则会飞到视口左上角 */
-    .win-btn svg{position:static;inset:auto;display:block;width:12px;height:12px;
+    .win-btn svg{position:static;inset:auto;display:block;width:14px;height:14px;
       pointer-events:none}
     .win-btn:hover{background:rgba(255,255,255,.12);color:#e8eaed}
     .win-btn.close:hover{background:#c42b1c;color:#fff}
@@ -121,13 +129,15 @@
     .w-brand .tb-brand img{width:28px;height:28px}
     .tb-icon{color:var(--tx);cursor:pointer;padding:6px 12px;border-radius:4px;font:inherit;font-size:17px;
       line-height:1;display:flex;align-items:center;flex:none}
+    /* 菜单图标也是 antd 的路径，同样要显式回到行内盒（理由见 .win-btn svg） */
+    .tb-icon svg{position:static;inset:auto;display:block;width:16px;height:16px}
     .tb-project{display:flex;align-items:center;gap:8px;color:#dfe1e5;font:inherit;
       padding:3px 10px 3px 4px;border-radius:6px;cursor:pointer;max-width:280px}
     .pj-avatar{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;
       font-size:9px;font-weight:600;color:#fff;flex:none}
     .pj-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .pj-caret{color:#9aa0a8;flex:none;display:flex;align-items:center}
-    .pj-caret svg{position:static;inset:auto;display:block;width:12px;height:12px}
+    .pj-caret svg{position:static;inset:auto;display:block;width:14px;height:14px}
 
     /* 项目面板：仿 PyCharm 的宽下拉 */
     #project-pop{position:fixed;z-index:80;width:460px;max-height:70vh;overflow:auto;
@@ -139,7 +149,7 @@
       border-radius:5px;cursor:pointer}
     .pp-item:hover{background:#2e436e}
     .pp-item .ico{width:18px;text-align:center;color:#9aa0a8;flex:none}
-    .pp-item .ico svg{position:static;inset:auto;display:block;width:14px;height:14px;margin:0 auto}
+    .pp-item .ico svg{position:static;inset:auto;display:block;width:16px;height:16px;margin:0 auto}
     .pp-sep{height:1px;background:#393b40;margin:4px 6px}
     .pp-group{color:#6f737a;font-size:11px;padding:8px 10px 4px;letter-spacing:.3px}
     .pp-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:5px;
@@ -181,7 +191,11 @@
     .tb-pop button:disabled:hover{background:none}
     .tb-pop .sep{height:1px;background:var(--bd);margin:4px 6px}
     .tb-pop .has-sub{display:flex;align-items:center;justify-content:space-between;gap:18px}
-    .tb-pop .has-sub svg{position:static;inset:auto;display:block;width:11px;height:11px;
+    /* 行内小图标跟着字号走：菜单项的勾、画布行尾的标记、底部提示的图例 */
+    .tb-pop .mi{display:inline-flex;vertical-align:-2px;margin-right:6px}
+    .tb-pop .mi svg,.hi svg{width:1em;height:1em}
+    .hi{display:inline-flex;vertical-align:-2px}
+    .tb-pop .has-sub svg{position:static;inset:auto;display:block;width:14px;height:14px;
       opacity:.7}
     .tb-pop.sub-pop{z-index:97;top:auto;min-width:180px}
 
@@ -255,7 +269,7 @@
     .w-sec-h .chev{display:inline-flex;transition:transform .15s ease}
     .w-sec-h.open .chev{transform:rotate(90deg)}
     .w-sec-h .cnt{color:#6f737a}
-    .w-sec-h svg{position:static;inset:auto;display:block;width:11px;height:11px}
+    .w-sec-h svg{position:static;inset:auto;display:block;width:14px;height:14px}
     #w-recent li,#w-hidden li{display:flex;align-items:center;gap:12px;padding:10px;
       border-radius:8px;cursor:pointer}
     #w-recent li:hover,#w-hidden li:hover{background:#2b2d30}
@@ -264,13 +278,13 @@
     .w-nameline{display:flex;align-items:center;gap:6px;min-width:0}
     .w-nameline .w-name{min-width:0}
     .w-missing{color:#d9a03c;display:inline-flex;flex:none;cursor:help}
-    .w-missing svg{position:static;inset:auto;display:block;width:12px;height:12px}
+    .w-missing svg{position:static;inset:auto;display:block;width:14px;height:14px}
     #w-recent li.gone .w-name,#w-hidden li.gone .w-name{color:#9aa1aa}
     .w-act{width:26px;height:26px;border-radius:6px;border:none;background:none;
       color:#8b919a;display:grid;place-items:center;cursor:pointer;padding:0;flex:none}
     .w-act:hover{background:#33363a;color:#e6e8ea}
     .w-act.danger:hover{background:#3a2626;color:#e06c6c}
-    .w-act svg{position:static;inset:auto;display:block;width:13px;height:13px}
+    .w-act svg{position:static;inset:auto;display:block;width:14px;height:14px}
     #w-confirm{position:fixed;inset:0;z-index:99;display:grid;place-items:center;
       background:#0b0d11cc}
     #w-confirm[hidden]{display:none}
@@ -299,48 +313,33 @@
   // ── 共用小工具 ──────────────────────────────────────────────────
   const LOGO_IMG = '<img src="logo.png" alt="" width="20" height="20">';
 
-  // 全软件唯一一套图标：12 见方、1.5 线宽、圆头圆角、fill none、currentColor。
-  // 窗口按钮照 Windows 标题栏的标准画法，最大化是单框，还原是前后两个错开的框。
-  function icon(body) {
-    return (
-      '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor"' +
-      ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
-      body +
-      "</svg>"
-    );
-  }
+  // 全软件唯一一套图标：Ant Design Icons 的 outlined 子集，数据与拼 svg 的
+  // 小工具都在 src/vendor/icons.js。1024 网格的 fill 路径，粗细由形状决定、
+  // 任意尺寸都清晰，所以不再有 stroke-width；显示尺寸交给 CSS，只留 14 / 16 两档。
+  const antIcon = window.CLEW_ICON;
 
   const ICON = {
-    min: icon('<path d="M2 6h8"/>'),
-    max: icon('<rect x="2.25" y="2.25" width="7.5" height="7.5"/>'),
-    restore: icon('<path d="M4 4V2.25h5.75V8H8"/><rect x="2.25" y="4" width="5.75" height="5.75"/>'),
-    close: icon('<path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/>'),
-    chevronDown: icon('<path d="M2.75 4.5L6 7.75l3.25-3.25"/>'),
-    chevronRight: icon('<path d="M4.5 2.75L7.75 6 4.5 9.25"/>'),
-    folder: icon('<path d="M1.75 3.25h3.1l1.15 1.5h4.25v5.5H1.75z"/>'),
-    eye: icon(
-      '<path d="M1.4 6S3.1 3.2 6 3.2 10.6 6 10.6 6 8.9 8.8 6 8.8 1.4 6 1.4 6z"/>' +
-        '<circle cx="6" cy="6" r="1.35"/>',
-    ),
-    eyeOff: icon(
-      '<path d="M1.4 6S3.1 3.2 6 3.2 10.6 6 10.6 6 8.9 8.8 6 8.8 1.4 6 1.4 6z"/>' +
-        '<path d="M2.3 2.3l7.4 7.4"/>',
-    ),
-    trash: icon(
-      '<path d="M2.2 3.4h7.6"/><path d="M4.6 3.4V2.3h2.8v1.1"/>' +
-        '<path d="M3.3 3.4l.5 6.1h4.4l.5-6.1"/>',
-    ),
-    warn: icon(
-      '<path d="M6 1.9L11.1 10.2H0.9L6 1.9z"/><path d="M6 4.7v2.3"/>' +
-        '<circle cx="6" cy="8.6" r="0.45"/>',
-    ),
-    gear: icon(
-      '<circle cx="6" cy="6" r="1.85"/>' +
-        '<path d="M6 1.5v1.2M6 9.3v1.2M1.5 6h1.2M9.3 6h1.2"/>' +
-        '<path d="M2.8 2.8l.85.85M8.35 8.35l.85.85M9.2 2.8l-.85.85M3.65 8.35l-.85.85"/>',
-    ),
+    min: antIcon("min"),
+    max: antIcon("max"),
+    restore: antIcon("restore"),
+    close: antIcon("close"),
+    chevronDown: antIcon("chevronDown"),
+    chevronRight: antIcon("chevronRight"),
+    folder: antIcon("folder"),
+    search: antIcon("search"),
+    eye: antIcon("eye"),
+    eyeOff: antIcon("eyeOff"),
+    trash: antIcon("trash"),
+    warn: antIcon("warn"),
+    gear: antIcon("gear"),
+    menu: antIcon("menu"),
   };
 
+
+  // 静态 HTML 里的图标占位：<span class="hi" data-icon="branches"></span>
+  document.querySelectorAll("[data-icon]").forEach(function (el) {
+    el.innerHTML = antIcon(el.dataset.icon);
+  });
 
   const AVATAR_COLORS = ["#c94f4f", "#4f86c9", "#8f4fc9", "#c9864f", "#4fa87c", "#c94f86"];
 
@@ -773,7 +772,7 @@
   const burger = document.createElement("button");
   burger.className = "tb-icon";
   burger.id = "tb-burger";
-  burger.textContent = "☰";
+  burger.innerHTML = ICON.menu;
   burger.title = "菜单";
 
   const projectButton = document.createElement("button");
@@ -1003,7 +1002,13 @@
         continue;
       }
       const b = document.createElement("button");
-      b.textContent = item.label;
+      if (item.icon) {
+        const mark = document.createElement("span");
+        mark.className = "mi";
+        mark.innerHTML = item.icon;
+        b.appendChild(mark);
+      }
+      b.appendChild(document.createTextNode(item.label));
       if (item.disabled) b.disabled = true;
       if (item.title) b.title = item.title;
       b.onclick = function (e) {
@@ -1030,7 +1035,13 @@
         continue;
       }
       const b = document.createElement("button");
-      b.textContent = item.label;
+      if (item.icon) {
+        const mark = document.createElement("span");
+        mark.className = "mi";
+        mark.innerHTML = item.icon;
+        b.appendChild(mark);
+      }
+      b.appendChild(document.createTextNode(item.label));
       if (item.sub) {
         b.classList.add("has-sub");
         const arrow = document.createElement("span");
@@ -1104,9 +1115,10 @@
   help.id = "tb-help";
   help.hidden = true;
   help.innerHTML =
-    '<div class="card"><span class="close">✕</span>' +
+    '<div class="card"><span class="close">' + ICON.close + '</span>' +
     "<h3>Clew " + VERSION + "</h3>" +
-    "<p>从入口开始读调用图。点 <kbd>◆</kbd> 进入实现，类卡片按需长出方法目录。</p>" +
+    "<p>从入口开始读调用图。点行尾的 <span class=\"hi\">" + antIcon("enter") +
+    "</span> 标记进入实现，类卡片按需长出方法目录。</p>" +
     "<p>空白处按住拖动画布，右下角 minimap 点哪儿跳哪儿。</p>" +
     "<p>第二行下拉换入口；文件菜单里可以打开或关闭项目。</p></div>";
   document.body.appendChild(help);
@@ -1144,7 +1156,8 @@
     const list = window.CLEW_THEMES || [];
     const now = window.__clewThemeId ? window.__clewThemeId() : "";
     const items = list.map((t) => ({
-      label: (t.id === now ? "✓ " : "   ") + t.name,
+      label: t.name,
+      icon: t.id === now ? antIcon("check") : "",
       run: () => {
         if (window.__clewApplyTheme) window.__clewApplyTheme(t.id);
       },
@@ -1465,15 +1478,12 @@
   })();
 
   // ── 入口面板 ────────────────────────────────────────────────────
-  // 收藏标记统一用五角星：未收藏描边，收藏后填色（见 .flag.on path{fill}）。
-  // 这条 path 与 app.js 里的 STAR_PATH 是同一个形状，改的时候两边一起改。
-  const STAR_PATH =
-    "M6 1.4L7.12 4.46L10.38 4.58L7.81 6.59L8.7 9.72L6 7.9L3.3 9.72L4.19 6.59L1.63 4.58L4.88 4.46Z";
+  // 收藏标记：antd 的 StarOutlined / StarFilled 两个都放进去，靠 CSS 切显示。
+  // 两个图标都是填充路径，没法像原来那样用 fill 切换实心/描边。
+  // 同一份标记在 app.js 也有，改的时候两边一起改。
   const FLAG_SVG =
-    '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor"' +
-    ' stroke-width="1.4" stroke-linejoin="round"' +
-    ' style="position:static;inset:auto;width:12px;height:12px;display:block">' +
-    '<path d="' + STAR_PATH + '"/></svg>';
+    '<span class="star-off">' + antIcon("starOff") + "</span>" +
+    '<span class="star-on">' + antIcon("starOn") + "</span>";
 
   function splitId(id) {
     const i = id.indexOf(":");
@@ -1613,7 +1623,7 @@
       padding-top:6px;gap:2px;z-index:42}
     .rail-btn{width:30px;height:30px;display:grid;place-items:center;background:none;
       border:none;border-radius:4px;color:#8f939b;cursor:pointer}
-    .rail-btn svg{position:static;inset:auto;display:block;width:15px;height:15px}
+    .rail-btn svg{position:static;inset:auto;display:block;width:16px;height:16px}
     .rail-btn:hover{background:#2b2d30;color:#dfe1e5}
     .rail-btn.on{background:#2e436e;color:#e8edf7}
 
@@ -1646,7 +1656,7 @@
       background:transparent;border:none;border-radius:4px;color:#dfe1e5;
       font:inherit;font-size:12.5px;padding:0 8px;cursor:pointer}
     .sp-view:hover,.sp-view.open{background:#2b2d30}
-    .sp-view svg{position:static;inset:auto;display:block;width:11px;height:11px;
+    .sp-view svg{position:static;inset:auto;display:block;width:14px;height:14px;
       color:#8f939b}
     .sp-list{flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 0}
     /* 滚动条：细、圆、半透明，跟面板一个色系；不要系统默认那条亮灰的。
@@ -1680,7 +1690,7 @@
     .sp-row.third{color:#6f737a}
     .sp-row .caret{width:13px;flex:none;display:flex;align-items:center;
       justify-content:center;color:#8f939b}
-    .sp-row .caret svg{position:static;inset:auto;display:block;width:13px;height:13px}
+    .sp-row .caret svg{position:static;inset:auto;display:block;width:14px;height:14px}
     .sp-row .ic{width:13px;flex:none;color:#8f939b;font-size:11px;text-align:center;
       display:flex;align-items:center;justify-content:center}
     .sp-row .fname{color:#8f939b;flex:1 1 auto;min-width:0;overflow:hidden;
@@ -1698,20 +1708,24 @@
     /* 注释行就是一条路径字符串，一种颜色；放不下就尾部省略 */
     .sp-row.note .note-file{color:#6f737a;flex:0 1 auto;min-width:0;overflow:hidden;
       text-overflow:ellipsis;white-space:nowrap}
-    .sp-row .ic svg{position:static;inset:auto;display:block;width:13px;height:13px}
+    .sp-row .ic svg{position:static;inset:auto;display:block;width:14px;height:14px}
     .sp-row .nm{overflow:hidden;text-overflow:ellipsis}
     .sp-row .mod{color:#6f737a;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;
       max-width:90px;flex:none}
     .sp-row .tail{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
     .sp-row .edot{width:4px;height:4px;border-radius:50%;background:var(--acc);flex:none}
-    .sp-row .flag{width:12px;height:12px;display:none;color:#6f737a}
+    .sp-row .flag{width:14px;height:14px;display:none;color:#6f737a}
     .sp-row:hover .flag,.sp-row .flag.on{display:flex;align-items:center}
     .sp-row .flag.on{color:var(--sel)}
-    .sp-row .flag svg path{fill:none}
-    .sp-row .flag.on svg path{fill:currentColor}
-    /* 卡片头那颗星：同一形状、同一填充规则 */
-    .head .btn.pin svg path{fill:none}
-    .head .btn.pin.on svg path{fill:currentColor}
+    /* 收藏星：两个图标各占一份，按收藏状态切换显示 */
+    .sp-row .flag svg,.head .btn.pin svg{position:static;inset:auto;display:block;
+      width:14px;height:14px}
+    .sp-row .flag .star-on,.head .btn.pin .star-on{display:none}
+    .sp-row .flag.on .star-off,.head .btn.pin.on .star-off{display:none}
+    .sp-row .flag.on .star-on,.head .btn.pin.on .star-on{display:inline-flex}
+    /* 卡片头与帮助卡上的关闭按钮 */
+    .head .btn.close svg,#tb-help .close svg{position:static;inset:auto;display:block;
+      width:14px;height:14px}
     .sp-row .flag:hover{color:#dfe1e5}
     .sp-empty{color:#6f737a;padding:10px 12px;font-size:12.5px;line-height:1.6}
 
@@ -1770,7 +1784,7 @@
     '<button type="button" class="rail-btn on" data-tab="tree" title="符号树">' +
       ICON.folder + "</button>" +
     '<button type="button" class="rail-btn" data-tab="search" title="搜索">' +
-      icon('<circle cx="5.2" cy="5.2" r="3.2"/><path d="M7.6 7.6l2.8 2.8"/>') +
+      ICON.search +
     "</button>" +
     '<button type="button" class="rail-btn rail-pin" id="rail-settings" title="设置">' +
       ICON.gear + "</button>";
@@ -1799,7 +1813,8 @@
     #w-space{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto}
     #w-space[hidden]{display:none}
 
-    .rail-pin{margin-top:auto}
+    /* 齿轮钉在最下面，留一点边距：贴着 rail 底边看着像被裁掉一半 */
+    .rail-pin{margin-top:auto;margin-bottom:8px}
 
     #settings{position:fixed;inset:0;z-index:120;display:grid;place-items:center;
       background:#0b0d11cc}
@@ -1814,7 +1829,7 @@
     .st-x{width:28px;height:28px;display:grid;place-items:center;background:none;
       border:none;border-radius:4px;color:#8f939b;cursor:pointer}
     .st-x:hover{background:#2b2d30;color:#dfe1e5}
-    .st-x svg{position:static;inset:auto;display:block;width:12px;height:12px}
+    .st-x svg{position:static;inset:auto;display:block;width:14px;height:14px}
     .st-main{flex:1;display:flex;min-height:0}
     .st-nav{width:168px;flex:none;border-right:1px solid #2b2d30;padding:8px 6px;
       display:flex;flex-direction:column;gap:2px}

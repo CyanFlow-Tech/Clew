@@ -1,13 +1,11 @@
 
 // 库里模块级定义叫 `<module>`，界面上叫 __main__（if __name__ == "__main__"）
-// 收藏标记的五角星，与 shell.js 里的 STAR_PATH 是同一个形状，改的时候两边一起改
-const STAR_PATH =
-  "M6 1.4L7.12 4.46L10.38 4.58L7.81 6.59L8.7 9.72L6 7.9L3.3 9.72L4.19 6.59L1.63 4.58L4.88 4.46Z";
+// 收藏标记：antd 的 StarOutlined / StarFilled 两份都放进去，靠 CSS 切显示。
+// 与 shell.js 的 FLAG_SVG 是同一份标记，改的时候两边一起改。
+const ICON = window.CLEW_ICON || function () { return ""; };
 const STAR_SVG =
-  '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor"' +
-  ' stroke-width="1.4" stroke-linejoin="round"' +
-  ' style="position:static;inset:auto;width:12px;height:12px;display:block">' +
-  '<path d="' + STAR_PATH + '"/></svg>';
+  '<span class="star-off">' + ICON("starOff") + '</span>' +
+  '<span class="star-on">' + ICON("starOn") + '</span>';
 
 function showQual(q) { return q === "<module>" ? "__main__" : q; }
 function showId(id) {
@@ -231,7 +229,7 @@ function renderLine(ln, host, ownerId) {
     a.dataset.cs = ln.cs;
     const cnt = c.candidates && c.candidates.length > 1
       ? (c.candidates.length > 9 ? "+" : c.candidates.length) : "";
-    a.textContent = "◆" + cnt;
+    a.innerHTML = ICON("enter") + (cnt ? '<span class="cnt">' + cnt + "</span>" : "");
     if (selectedCs === ln.cs) a.className += " on";
     a.title = "展开并显示这一跳的实参绑定";
     a.onmouseenter = function (ev) {
@@ -259,7 +257,11 @@ function renderLine(ln, host, ownerId) {
     // 给出候选让人自己挑。悬停或点击都把气泡打开。
     const a = document.createElement("span");
     a.className = "anchor poly";
-    a.textContent = "◆" + (c.candidates.length > 9 ? "+" : c.candidates.length);
+    a.innerHTML =
+      ICON("enter") +
+      '<span class="cnt">' +
+      (c.candidates.length > 9 ? "+" : c.candidates.length) +
+      "</span>";
     if (selectedCs === ln.cs) a.className += " on";
     a.title = "接收者类型未知，同名方法有 " + c.candidates.length + " 个候选，点开挑一个";
     const load = function (ev) {
@@ -278,7 +280,7 @@ function renderLine(ln, host, ownerId) {
   } else if (c) {
     const a = document.createElement("span");
     a.className = "anchor dead";
-    a.textContent = "◆";
+    a.innerHTML = ICON("enter");
     a.title = "未解析（" + (c.conf === "builtin" ? "内置/库函数" : "找不到定义") + "）";
     row.appendChild(a);
   }
@@ -324,7 +326,7 @@ function renderCard(id) {
     '<span class="btn pin' +
       (window.__clewIsFavorite && window.__clewIsFavorite(id) ? " on" : "") +
       '" title="标记为入口">' + STAR_SVG + '</span>' +
-    (roots.has(id) ? '' : '<span class="btn close">✕</span>');
+    (roots.has(id) ? '' : '<span class="btn close">' + ICON("close") + '</span>');
   head.onclick = function () { select(id); };
   head.ondblclick = function (e) { e.stopPropagation(); openFocus(id); };
   head.querySelector(".tg").onclick = function (e) {
@@ -389,7 +391,7 @@ function renderAccordion(classId, host) {
     const head = document.createElement("div");
     head.className = "acc-head";
     head.dataset.method = ctorId;
-    head.innerHTML = '<span class="caret">' + (made ? "▣" : "▸") + '</span>' +
+    head.innerHTML = '<span class="caret">' + ICON("enter") + '</span>' +
       '<span class="nm">' + esc(NODES[ctorId].title) + '</span>' +
       '<span class="cnt">' +
       (inherited ? "继承自 " + esc(card.ctor_owner) : "构造") + '</span>';
@@ -407,7 +409,8 @@ function renderAccordion(classId, host) {
     box.className = "acc";
     const head = document.createElement("div");
     head.className = "acc-head";
-    head.innerHTML = '<span class="caret">·</span>' +
+    // 不可展开的一行：地球＝构造来自项目外，和上面那行的 ↳ 形成"能进去 / 进不去"的对比
+    head.innerHTML = '<span class="caret">' + ICON("external") + '</span>' +
       '<span class="nm">' + esc(card.external_base) + '.__init__(…)</span>' +
       '<span class="cnt">构造 · 项目外</span>';
     head.title = card.external_base +
@@ -416,7 +419,7 @@ function renderAccordion(classId, host) {
     box.appendChild(head);
     host.appendChild(box);
   }
-  // 方法目录：只列用户实际进入过的（点 ◆ 或点目录行产生）
+  // 方法目录：只列用户实际进入过的（点行尾标记或点目录行产生）
   const set = methodSetOf(classId);
   if (set.size) {
     Array.from(set).sort().forEach(function (mid) {
@@ -429,7 +432,7 @@ function renderAccordion(classId, host) {
       const head = document.createElement("div");
       head.className = "acc-head";
       head.dataset.method = mid;
-      head.innerHTML = '<span class="caret">' + (made ? "▣" : "▸") + '</span>' +
+      head.innerHTML = '<span class="caret">' + ICON("enter") + '</span>' +
         '<span class="nm">' + esc(m.qualname.split(".").pop()) +
         '(' + m.params.join(", ") + ')</span>' +
         '<span class="cnt">被调 ' + (FANIN[mid] || 0) + '</span>';
@@ -444,7 +447,7 @@ function renderAccordion(classId, host) {
   } else {
     const note = document.createElement("div");
     note.className = "hidden-note";
-    note.textContent = "还没有走过本类的方法（目录只收录走过的，点 ◆ 指进来才补）";
+    note.textContent = "还没有走过本类的方法（目录只收录走过的，点行尾标记指进来才补）";
     host.appendChild(note);
   }
 }

@@ -8,7 +8,9 @@
 #>
 param(
   [int]$Port = 8898,
-  [int]$Cdp = 9443
+  [int]$Cdp = 9443,
+  # 图标集：空 = 默认（material），传 antd 可验另一套
+  [string]$Icons = ""
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -20,9 +22,7 @@ Copy-Item (Join-Path $root "src\app.js") $web -Force
 Copy-Item (Join-Path $root "src\themes.js") $web -Force
 Copy-Item (Join-Path $root "src\logo.png") $web -Force
 Copy-Item (Join-Path $root "src\index.html") $web -Force
-if (-not (Test-Path (Join-Path $web "vendor"))) {
-  Copy-Item (Join-Path $root "src\vendor") $web -Recurse -Force
-}
+Copy-Item (Join-Path $root "src\vendor") $web -Recurse -Force
 Set-Content -Path (Join-Path $web "__clew_graph.json") -Value '{"cards":{},"calls":{},"entries":[]}' -Encoding UTF8
 
 $stub = @'
@@ -91,7 +91,7 @@ Remove-Item -Recurse -Force $profile -ErrorAction SilentlyContinue
 $edge = Start-Process -FilePath "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" -ArgumentList @(
     "--headless=new", "--remote-debugging-port=$Cdp", "--user-data-dir=$profile",
     "--no-first-run", "--disable-extensions", "--disable-sync", "--disable-gpu",
-    "--window-size=1440,920", "http://127.0.0.1:$Port/settings-harness.html"
+    "--window-size=1440,920", "http://127.0.0.1:$Port/settings-harness.html$(if ($Icons) { "?icons=$Icons" })"
 ) -PassThru
 Start-Sleep -Seconds 10
 
@@ -148,8 +148,34 @@ $check = @'
   };
 
   const modal = q("#settings");
-  const navItems = modal.querySelectorAll(".st-nav-item");
-  const blocks = modal.querySelectorAll(".st-pane");
+  // 图标：全套是 antd 的 1024 网格 fill 路径，尺寸只有 14 / 16 两档
+  const iconOf = (sel) => {
+    const node = document.querySelector(sel);
+    return node ? node.getAttribute("viewBox") : null;
+  };
+  const sizeOf = (sel) => {
+    const node = document.querySelector(sel);
+    return node ? Math.round(node.getBoundingClientRect().width) : null;
+  };
+  const posOf = (sel) => {
+    const node = document.querySelector(sel);
+    return node ? getComputedStyle(node).position : null;
+  };
+  out.icons = {
+    rail: iconOf("#side-rail svg"),
+    gear: iconOf("#rail-settings svg"),
+    close: iconOf('#settings [data-k="close"] svg'),
+    railSize: sizeOf("#rail-settings svg"),
+    closeSize: sizeOf('#settings [data-k="close"] svg'),
+    // 画布那条 svg{position:absolute} 全局规则不能把图标拽走
+    positions: {
+      rail: posOf("#rail-settings svg"),
+      close: posOf('#settings [data-k="close"] svg'),
+      burger: posOf("#tb-burger svg"),
+    },
+  };
+
+  const navItems = modal.querySelectorAll(".st-nav-item");  const blocks = modal.querySelectorAll(".st-pane");
   const dataPane = modal.querySelector('.st-pane[data-block="data"]');
   const cachePane = modal.querySelector('.st-pane[data-block="cache"]');
   const pathEl = dataPane.querySelector('[data-k="path"]');
@@ -243,6 +269,18 @@ $check = @'
     migrateDisabled: migrateBtn.disabled,
     // 迁移不该把人踢回欢迎页
     stillInProject: q("#welcome").hidden,
+  };
+
+  // 主题菜单的选中标记也换成了图标
+  const themeBtn = Array.from(document.querySelectorAll(".tb-menu-item")).find(
+    (b) => b.textContent.trim() === "主题"
+  );
+  if (themeBtn) themeBtn.click();
+  await wait(250);
+  const menuIcon = document.querySelector(".tb-pop .mi svg");
+  out.menuIcon = {
+    count: document.querySelectorAll(".tb-pop .mi svg").length,
+    viewBox: menuIcon ? menuIcon.getAttribute("viewBox") : null,
   };
 
   // Esc 关弹窗

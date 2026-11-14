@@ -13,9 +13,7 @@ Copy-Item (Join-Path $root "src\shell.js") $web -Force
 Copy-Item (Join-Path $root "src\app.js") $web -Force
 Copy-Item (Join-Path $root "src\themes.js") $web -Force
 Copy-Item (Join-Path $root "src\logo.png") $web -Force
-if (-not (Test-Path (Join-Path $web "vendor"))) {
-  Copy-Item (Join-Path $root "src\vendor") $web -Recurse -Force
-}
+Copy-Item (Join-Path $root "src\vendor") $web -Recurse -Force
 
 # 真实数据：index 里的整棵树，由 clew tree --json 导出给桩用
 & (Join-Path $root "target\debug\clew.exe") tree $Project --db $Db --json |
@@ -283,13 +281,54 @@ $check = @'
       flipped: after ? after.classList.contains("on") !== before : null,
       listRowsUnchanged: rows().length === favRow.parentElement.childElementCount
     };
+    // 收藏星是两份 antd 图标，靠 CSS 切显示：这里确认切的是图标不是填充规则
+    if (after) {
+      const off = after.querySelector(".star-off");
+      const on = after.querySelector(".star-on");
+      const shown = (el) => (el ? getComputedStyle(el).display !== "none" : null);
+      out.favSync.star = {
+        offExists: !!off,
+        onExists: !!on,
+        leading: off ? off.querySelector("svg").getAttribute("viewBox") : null,
+        filling: on ? on.querySelector("svg").getAttribute("viewBox") : null,
+        onClass: after.classList.contains("on"),
+        // 收藏状态与显示的那颗星必须一致：on 时只显示实心那份
+        consistent:
+          (shown(on) === true) === after.classList.contains("on") &&
+          shown(off) !== shown(on),
+      };
+    }
     await window.__clewToggleFavorite(id);
     await wait(200);
   }
 
+  // 卡片头也换了图标：星是两份 antd 星，关闭是 antd 的叉。
+  // 画布那条全局 svg 规则会拽走没顶回来的图标，这里量一下位置与尺寸。
+  const cardIcon = (sel) => {
+    const node = document.querySelector(sel);
+    if (!node) return null;
+    const box = getComputedStyle(node);
+    return {
+      position: box.position,
+      width: Math.round(node.getBoundingClientRect().width),
+      viewBox: node.getAttribute("viewBox"),
+    };
+  };
+  out.cardIcons = {
+    starOff: cardIcon("#graph .head .btn.pin .star-off svg"),
+    starOn: cardIcon("#graph .head .btn.pin .star-on svg"),
+    helpClose: cardIcon("#tb-help .close svg"),
+  };
+  // 行尾锚点标记也是 antd 图标，尺寸跟着字号走
+  const anchorIcon = document.querySelector("#graph .anchor svg");
+  out.anchorIcons = {
+    count: document.querySelectorAll("#graph .anchor").length,
+    viewBox: anchorIcon ? anchorIcon.getAttribute("viewBox") : null,
+    width: anchorIcon ? Math.round(anchorIcon.getBoundingClientRect().width) : null,
+  };
+
   S.toggle(false);
-  await wait(300);
-  out.closed = {
+  await wait(300);  out.closed = {
     hidden: document.getElementById("side-panel").hidden,
     graphLeft: getComputedStyle(document.getElementById("graph")).left,
   };

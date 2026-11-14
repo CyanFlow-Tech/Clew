@@ -88,7 +88,11 @@
   .ln.more:hover{color:var(--acc)}
   .ext{border-bottom:1px dotted var(--acc);cursor:help}
   .anchor{position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:10px;
-    cursor:pointer;z-index:5;color:var(--call);white-space:nowrap}
+    cursor:pointer;z-index:5;color:var(--call);white-space:nowrap;
+    display:flex;align-items:center;gap:2px}
+  /* 行内小图标跟着字号走，不进 14 / 16 两档：它们嵌在正文里，撑大会顶破行高 */
+  .anchor svg{width:12px;height:12px}
+  #hint svg{width:1em;height:1em;vertical-align:-2px}
   .anchor.on{color:var(--sel)}
   .anchor.heur{color:var(--heur);opacity:.85}
   .anchor.poly{color:#bc8cff}
@@ -103,7 +107,9 @@
   .acc-head.sel-row{background:#3a2f14;color:var(--sel)}
   .acc-head.sel-row .nm{color:var(--sel)}
   .card.related{border-color:#a8873555;box-shadow:0 0 0 2px #e3b34122}
-  .acc-head .caret{color:var(--acc)}
+  .acc-head .caret{color:var(--acc);display:flex;align-items:center}
+  /* 手风琴的展开符用实心小三角：卡片里字号只有 10px 左右，细线箭头在这个尺寸会糊 */
+  .acc-head .caret svg{width:12px;height:12px;display:block}
   .acc-head .nm{color:var(--acc);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .acc-head .cnt{color:var(--call);font-size:9.5px}
   .acc-body{padding-left:10px;border-left:2px solid #2d333b;margin-left:10px}
@@ -128,10 +134,14 @@
 <div id="graph"><div id="world"><svg id="edges"></svg></div></div>
 <div id="bubble"></div>
 <div id="focus"></div>
-<div id="hint">◆ 橙色=精确 · 黄=启发式 · 紫=多态 · 灰=未解析 · ✕ 关闭（引用归零才删） · 类里的方法点开就地展开</div>
+<div id="hint"><span class="hi" data-icon="enter"></span> 橙色=精确 · 黄=启发式 · 紫=多态 · 灰=未解析 · <span class="hi" data-icon="close"></span> 关闭（引用归零才删） · 类里的方法点开就地展开</div>
 
 <!-- 代码配色主题：只换 token 颜色，先于脚本加载，省掉首帧闪一下 -->
 <script src="themes.js"></script>
+<!-- 图标：两套同键名的资源，vendor/icons.js 选一套；?icons=antd 可临时换 -->
+<script src="vendor/icons-antd.js"></script>
+<script src="vendor/icons-material.js"></script>
+<script src="vendor/icons.js"></script>
 <!-- 行内高亮：本地 vendoring 的 highlight.js，不依赖网络，随 resources 一起打进二进制 -->
 <script src="vendor/highlight.min.js"></script>
 <script>
