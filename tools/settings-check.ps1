@@ -271,6 +271,45 @@ $check = @'
     stillInProject: q("#welcome").hidden,
   };
 
+  // 标题栏菜单：点开之后，鼠标划过菜单项就该展开，不用再点一次
+  const burger = q("#tb-burger");
+  if (burger) burger.click();
+  await wait(200);
+  const fileItem = Array.from(document.querySelectorAll(".tb-menu-item")).find(
+    (b) => b.getAttribute("data-menu") === "file"
+  );
+  const menuOpenByHover = { menuVisible: !q("#tb-menu").hidden };
+  if (fileItem) {
+    fileItem.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    await wait(200);
+    const pop = document.querySelector(".tb-pop:not([hidden])");
+    menuOpenByHover.shown = !!pop;
+    menuOpenByHover.firstLabel = pop ? pop.querySelector("button").textContent.trim() : null;
+    menuOpenByHover.itemOpen = fileItem.classList.contains("open");
+  }
+  out.menuHover = menuOpenByHover;
+
+  // 帮助也换成下拉：划过只出菜单，点里面那项才开面板
+  const helpItem = Array.from(document.querySelectorAll(".tb-menu-item")).find(
+    (b) => b.getAttribute("data-menu") === "help"
+  );
+  if (helpItem) {
+    helpItem.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    await wait(200);
+    const helpPop = document.querySelector(".tb-pop:not([hidden])");
+    out.helpMenu = {
+      shown: !!helpPop,
+      label: helpPop ? helpPop.querySelector("button").textContent.trim() : null,
+      panelClosed: q("#tb-help").hidden,
+    };
+    const entry = helpPop ? helpPop.querySelector("button") : null;
+    if (entry) entry.click();
+    await wait(300);
+    out.helpMenu.panelOpened = !q("#tb-help").hidden;
+    q("#tb-help").hidden = true;
+  }
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
   // 主题菜单的选中标记也换成了图标
   const themeBtn = Array.from(document.querySelectorAll(".tb-menu-item")).find(
     (b) => b.textContent.trim() === "主题"

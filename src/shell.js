@@ -1129,9 +1129,21 @@
     if (e.target === help) help.hidden = true;
   };
 
+  // 菜单项：点一下展开，鼠标划过去也展开（不用再点第二次）
   menu.addEventListener("click", function (e) {
     const item = e.target.closest("[data-menu]");
     if (!item) return;
+    openMenu(item);
+  });
+  for (const item of menu.children) {
+    item.onmouseenter = function () {
+      if (menu.hidden) return;
+      openMenu(item);
+    };
+  }
+
+  /// 展开某一栏的菜单。三栏都有下拉，帮助那一栏只有一项。
+  function openMenu(item) {
     for (const b of menu.children) b.classList.toggle("open", b === item);
     if (item.dataset.menu === "file") {
       popAt(item, [
@@ -1146,10 +1158,16 @@
     } else if (item.dataset.menu === "theme") {
       popAt(item, themeItems());
     } else {
-      closePop();
-      help.hidden = false;
+      popAt(item, [
+        {
+          label: "关于 Clew",
+          run: function () {
+            help.hidden = false;
+          },
+        },
+      ]);
     }
-  });
+  }
 
   // 代码配色主题：直接铺在菜单里，当前那个前面打勾
   function themeItems() {
