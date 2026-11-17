@@ -4,7 +4,7 @@
 //! inference, then project-wide uniqueness.
 //! Deliberately no type-system analysis here (that is ty's job): syntax level only.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -399,7 +399,7 @@ impl Builder {
         end: usize,
         mut repls: Vec<(usize, usize, String)>,
     ) -> String {
-        repls.sort_by_key(|(s, _, _)| *s);
+        repls.sort_by_key(|(s, e, _)| (*s, std::cmp::Reverse(*e)));
         let mut out = String::new();
         let mut cursor = start;
         for (s, e, name) in repls {
@@ -478,7 +478,7 @@ impl Builder {
         // a lone top-level call keeps the statement line as its own row
         let statement_call = if roots.len() == 1 { Some(roots[0]) } else { None };
 
-        let mut name_of: HashMap<usize, String> = HashMap::new();
+        let mut name_of: BTreeMap<usize, String> = BTreeMap::new();
         for &i in &order {
             if statement_call == Some(i) {
                 continue;
@@ -1706,7 +1706,7 @@ fn postorder(idx: usize, children: &[Vec<usize>], out: &mut Vec<usize>) {
 /// Call spans inside `start..end` that got a temporary name, minus `exclude`.
 fn repls_within(
     calls: &[Node],
-    name_of: &HashMap<usize, String>,
+    name_of: &BTreeMap<usize, String>,
     exclude: Option<usize>,
     start: usize,
     end: usize,
@@ -1721,7 +1721,7 @@ fn repls_within(
             out.push((s, e, name.clone()));
         }
     }
-    out.sort_by_key(|(s, _, _)| *s);
+    out.sort_by_key(|(s, e, _)| (*s, std::cmp::Reverse(*e)));
     out
 }
 
