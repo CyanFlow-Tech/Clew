@@ -1296,8 +1296,6 @@ impl Builder {
 
     // ── resolution ────────────────────────────────────────────────
     pub(crate) fn resolve(&mut self) {
-        // 注入的全项目索引优先。按需物化一个文件时，本地的卡片只有几十张，
-        // 靠它判断唯一性会把「全项目有十个同名函数」看成唯一。
         let by_name: Arc<BTreeMap<String, Vec<String>>> = match &self.global_by_name {
             Some(shared) => shared.clone(),
             None => Arc::new({
@@ -1315,11 +1313,6 @@ impl Builder {
             }),
         };
 
-        // Method lookup by name, built once.
-        //
-        // Walking `self.methods` per call site is what made resolution quadratic:
-        // on a 220k-symbol project every `obj.x()` scanned the whole method table.
-        // These two indexes turn each lookup into a single map hit.
         let (by_module_method, local_by_method) = {
             let mut local: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
             let mut global: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1347,7 +1340,6 @@ impl Builder {
             None => Arc::new(local_by_method),
         };
 
-        // local variables -> class cards
         let mut card_locals: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         for (card_id, vars) in self.card_locals.clone() {
             let mut resolved = BTreeMap::new();
@@ -1360,7 +1352,7 @@ impl Builder {
                 card_locals.insert(card_id, resolved);
             }
         }
-        // class attributes -> class cards
+
         let mut class_attrs: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         for (cls_id, attrs) in self.class_attrs.clone() {
             let mut resolved = BTreeMap::new();
@@ -1392,233 +1384,27 @@ impl Builder {
             call.recv = raw.recv.clone();
             call.ln = raw.line;
 
-            let module = CardId::module_of(&call.from).unwrap_or("").to_string();
-            // Only the qualname is needed while resolving; cloning the whole card
-            // (with its rendered lines) for every call site is wasted work.
-            let card_qualname: Option<String> =
-                self.cards.get(&call.from).map(|c| c.qualname.clone());
+            let caller = Caller::new(&call.from, &self.cards);
+            let resolution = {
+                let resolver = Resolver {
+                    b: self,
+                    by_name: by_name.as_ref(),
+                    by_module_method: &by_module_method,
+                    by_method: by_method.as_ref(),
+                    card_locals: &card_locals,
+                    class_attrs: &class_attrs,
+                };
+                resolver.resolve(&raw, &caller)
+            };
 
-            let mut chosen: Option<String> = None;
-            let mut conf = Confidence::None;
-            let mut candidates: Vec<String> = Vec::new();
-            let mut imported = None;
-            let mut typed = None;
-
-            if BUILTINS.contains(&raw.target.as_str()) {
-                conf = Confidence::Builtin;
-            } else {
-                match raw.kind {
-                    CallKind::SelfRef => {
-                        if let Some(qn) = &card_qualname {
-                            if let Some(cls) = class_of_qualname(qn) {
-                                if let Some(mid) = self
-                                    .methods
-                                    .get(&(module.clone(), cls.clone()))
-                                    .and_then(|m| m.get(&raw.target))
-                                {
-                                    // methods may be overridden in subclasses: expose every candidate.
-                                    // Copy at most MAX_CANDIDATES: a name like `run` is defined
-                                    // thousands of times, and cloning the whole list per call site
-                                    // costs more than the scan it replaced.
-                                    let cands = by_module_method
-                                        .get(&(module.clone(), raw.target.clone()));
-                                    chosen = Some(mid.clone());
-                                    match cands.map(|c| c.len()).unwrap_or(0) {
-                                        n if n > 1 => {
-                                            conf = Confidence::Poly;
-                                            candidates = cands
-                                                .map(|c| {
-                                                    c.iter()
-                                                        .take(MAX_CANDIDATES)
-                                                        .cloned()
-                                                        .collect()
-                                                })
-                                                .unwrap_or_default();
-                                        }
-                                        _ => conf = Confidence::Exact,
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    CallKind::SelfAttr => {
-                        if let (Some(qn), Some(attr)) = (&card_qualname, &raw.recv) {
-                            if let Some(cls) = class_of_qualname(qn) {
-                                let cls_id = self
-                                    .class_ids
-                                    .get(&(module.clone(), cls.clone()))
-                                    .cloned();
-                                if let Some(cls_id) = cls_id {
-                                    if let Some(attr_cls) = class_attrs
-                                        .get(&cls_id)
-                                        .and_then(|a| a.get(attr))
-                                        .cloned()
-                                    {
-                                        if let Some(mid) =
-                                            self.find_method(&attr_cls, &raw.target, 0)
-                                        {
-                                            chosen = Some(mid);
-                                            conf = Confidence::Exact;
-                                            typed = Some(format!("{attr}: {}", short_name(&attr_cls)));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    CallKind::Attr => {
-                        if let Some(recv) = &raw.recv {
-                            if let Some(target_cls) =
-                                card_locals.get(&call.from).and_then(|m| m.get(recv)).cloned()
-                            {
-                                if let Some(mid) = self.find_method(&target_cls, &raw.target, 0) {
-                                    chosen = Some(mid);
-                                    conf = Confidence::Exact;
-                                    typed = Some(format!("{recv}: {}", short_name(&target_cls)));
-                                }
-                            }
-                        }
-                        // 接收者是导入进来的模块。`from tools import skill_ledger` 之后
-                        // `skill_ledger.get_entry(...)` 指的是那个模块的顶层定义，不是某个
-                        // 同名类的方法。只按方法名在全项目里挑，会挑到别人的测试替身。
-                        if chosen.is_none() {
-                            if let Some(recv) = &raw.recv {
-                                if let Some(imp) = self.import_of(&call.from, &module, recv).cloned()
-                                {
-                                    // `import a.b` 之后 a.b.f，接收者就是模块 a.b。
-                                    // `from a import b` 之后 b.f，b 可能是子模块 a.b，也可能是 a 里的名字。
-                                    let owners: Vec<String> = if imp.module_import {
-                                        vec![imp.module.clone()]
-                                    } else {
-                                        vec![
-                                            format!("{}.{}", imp.module, imp.orig),
-                                            imp.module.clone(),
-                                        ]
-                                    };
-                                    for owner in &owners {
-                                        let want = Graph::card_id(owner, &raw.target);
-                                        if self.card_known(&want, &raw.target, by_name.as_ref()) {
-                                            chosen = Some(want);
-                                            conf = Confidence::Exact;
-                                            imported = Some(import_label(&imp));
-                                            break;
-                                        }
-                                    }
-                                    if chosen.is_none() {
-                                        let cls_id = Graph::card_id(&imp.module, &imp.orig);
-                                        if let Some(mid) = self.find_method(&cls_id, &raw.target, 0)
-                                        {
-                                            chosen = Some(mid);
-                                            conf = Confidence::Exact;
-                                            imported = Some(import_label(&imp));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // 接收者是构造调用：`Path().resolve()` 的类型就是 Path。
-                        // 项目里没有这个类（标准库或第三方）就到此为止，别去猜，
-                        // 但要把它来自哪个模块记下来，界面上标成外部类型。
-                        if chosen.is_none() {
-                            if let Some(ctor) = &raw.ctor {
-                                match self.resolve_class(&call.from, ctor) {
-                                    Some(cls_id) => {
-                                        if let Some(mid) = self.find_method(&cls_id, &raw.target, 0)
-                                        {
-                                            chosen = Some(mid);
-                                            conf = Confidence::Exact;
-                                            typed = Some(format!(
-                                                "{ctor}() → {}",
-                                                short_name(&cls_id)
-                                            ));
-                                        }
-                                    }
-                                    None => {
-                                        if let Some(imp) =
-                                            self.import_of(&call.from, &module, ctor)
-                                        {
-                                            typed = Some(format!(
-                                                "{ctor}() → 外部（{}）",
-                                                imp.module
-                                            ));
-                                            imported = Some(import_label(imp));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if chosen.is_none() {
-                            if let Some(list) = by_method.get(&raw.target) {
-                                if list.len() == 1 {
-                                    chosen = Some(list[0].clone());
-                                    conf = Confidence::Heur;
-                                } else if list.len() > 1 {
-                                    // 接收者类型未知，同名方法又不止一个：只给候选，
-                                    // 不挑一个装作解析到了。挑第一个就是在瞎猜。
-                                    candidates =
-                                        list.iter().take(MAX_CANDIDATES).cloned().collect();
-                                    conf = Confidence::Poly;
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-
-                if chosen.is_none() && raw.kind == CallKind::Name {
-                    let same = Graph::card_id(&module, &raw.target);
-                    // import 命中但目标卡不在场（按需模式，或重导出）时不能就地收手，
-                    // 下面还有按全项目名字唯一命中的兜底。
-                    let mut label_from_import = None;
-                    if self.cards.contains_key(&same) {
-                        chosen = Some(same);
-                        conf = Confidence::Exact;
-                    } else if let Some(imp) = self.import_of(&call.from, &module, &raw.target) {
-                        let target_id = Graph::card_id(&imp.module, &imp.orig);
-                        if self.card_known(&target_id, &raw.target, by_name.as_ref()) {
-                            chosen = Some(target_id);
-                            conf = Confidence::Exact;
-                        }
-                        label_from_import = Some(import_label(imp));
-                    }
-                    if chosen.is_none() {
-                        if let Some(hit) = by_name.get(&raw.target) {
-                            if hit.len() == 1 {
-                                chosen = Some(hit[0].clone());
-                                conf = Confidence::Heur;
-                            }
-                        }
-                    }
-                    if imported.is_none() {
-                        // 解析不到也要留下来源：`Path(__file__)` 这类名字至少让人看出
-                        // 它来自外部模块，不是项目里丢了定义
-                        imported = label_from_import;
-                    }
-                }
+            if let Some(to) = &resolution.chosen {
+                call.args = bind_args(&self.cards, &raw, to);
             }
-
-            if let Some(to) = &chosen {
-                if let Some(target_card) = self.cards.get(to) {
-                    let params = target_card.params.clone();
-                    let mut args = BTreeMap::new();
-                    for (i, expr) in raw.pos.iter().enumerate() {
-                        if let Some(p) = params.get(i) {
-                            args.insert(p.clone(), expr.clone());
-                        }
-                    }
-                    for (k, v) in &raw.kwargs {
-                        if params.contains(k) {
-                            args.insert(k.clone(), v.clone());
-                        }
-                    }
-                    call.args = args;
-                }
-            }
-            call.to = chosen;
-            call.conf = conf;
-            call.candidates = candidates;
-            call.imported = imported;
-            call.typed = typed;
+            call.to = resolution.chosen;
+            call.conf = resolution.conf;
+            call.candidates = resolution.candidates;
+            call.imported = resolution.imported;
+            call.typed = resolution.typed;
             self.calls.insert(cs_id, call);
         }
 
@@ -1628,6 +1414,7 @@ impl Builder {
             }
         }
     }
+
 
     /// 这个 id 是不是一个类。类卡可能还没物化（按需模式下只读了几个文件），
     /// 那就查全项目的类表。
@@ -2012,4 +1799,273 @@ fn short_name(card_id: &str) -> String {
         .map(|id| id.qualname().to_string())
         .unwrap_or_else(|| card_id.to_string());
     qualname.rsplit('.').next().unwrap_or(&qualname).to_string()
+}
+
+#[derive(Default)]
+struct Resolution {
+    chosen: Option<String>,
+    conf: Confidence,
+    candidates: Vec<String>,
+    imported: Option<String>,
+    typed: Option<String>,
+}
+
+struct Caller<'a> {
+    from: &'a str,
+    module: String,
+    qualname: Option<String>,
+}
+
+impl<'a> Caller<'a> {
+    fn new(from: &'a str, cards: &BTreeMap<String, Card>) -> Self {
+        Self {
+            from,
+            module: CardId::module_of(from).unwrap_or("").to_string(),
+            qualname: cards.get(from).map(|c| c.qualname.clone()),
+        }
+    }
+}
+
+fn bind_args(
+    cards: &BTreeMap<String, Card>,
+    raw: &RawCall,
+    to: &str,
+) -> BTreeMap<String, String> {
+    let mut args = BTreeMap::new();
+    let Some(target_card) = cards.get(to) else {
+        return args;
+    };
+    for (i, expr) in raw.pos.iter().enumerate() {
+        if let Some(p) = target_card.params.get(i) {
+            args.insert(p.clone(), expr.clone());
+        }
+    }
+    for (k, v) in &raw.kwargs {
+        if target_card.params.contains(k) {
+            args.insert(k.clone(), v.clone());
+        }
+    }
+    args
+}
+
+struct Resolver<'a> {
+    b: &'a Builder,
+    by_name: &'a BTreeMap<String, Vec<String>>,
+    by_module_method: &'a BTreeMap<(String, String), Vec<String>>,
+    by_method: &'a BTreeMap<String, Vec<String>>,
+    card_locals: &'a BTreeMap<String, BTreeMap<String, String>>,
+    class_attrs: &'a BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl Resolver<'_> {
+    fn resolve(&self, raw: &RawCall, caller: &Caller) -> Resolution {
+        if BUILTINS.contains(&raw.target.as_str()) {
+            return Resolution {
+                conf: Confidence::Builtin,
+                ..Default::default()
+            };
+        }
+        match raw.kind {
+            CallKind::SelfRef => self.self_ref(raw, caller),
+            CallKind::SelfAttr => self.self_attr(raw, caller),
+            CallKind::Attr => self.attr(raw, caller),
+            CallKind::Name => self.name(raw, caller),
+            CallKind::Other => Resolution::default(),
+        }
+    }
+
+    fn self_ref(&self, raw: &RawCall, caller: &Caller) -> Resolution {
+        let mut r = Resolution::default();
+        let Some(qualname) = &caller.qualname else {
+            return r;
+        };
+        let Some(cls) = class_of_qualname(qualname) else {
+            return r;
+        };
+        let Some(mid) = self
+            .b
+            .methods
+            .get(&(caller.module.clone(), cls))
+            .and_then(|m| m.get(&raw.target))
+        else {
+            return r;
+        };
+        r.chosen = Some(mid.clone());
+        let cands = self
+            .by_module_method
+            .get(&(caller.module.clone(), raw.target.clone()));
+        match cands.map(|c| c.len()).unwrap_or(0) {
+            n if n > 1 => {
+                r.conf = Confidence::Poly;
+                r.candidates = cands
+                    .map(|c| c.iter().take(MAX_CANDIDATES).cloned().collect())
+                    .unwrap_or_default();
+            }
+            _ => r.conf = Confidence::Exact,
+        }
+        r
+    }
+
+    fn self_attr(&self, raw: &RawCall, caller: &Caller) -> Resolution {
+        let mut r = Resolution::default();
+        let (Some(qualname), Some(attr)) = (&caller.qualname, &raw.recv) else {
+            return r;
+        };
+        let Some(cls) = class_of_qualname(qualname) else {
+            return r;
+        };
+        let Some(cls_id) = self
+            .b
+            .class_ids
+            .get(&(caller.module.clone(), cls))
+            .cloned()
+        else {
+            return r;
+        };
+        let Some(attr_cls) = self
+            .class_attrs
+            .get(&cls_id)
+            .and_then(|a| a.get(attr))
+            .cloned()
+        else {
+            return r;
+        };
+        let Some(mid) = self.b.find_method(&attr_cls, &raw.target, 0) else {
+            return r;
+        };
+        r.chosen = Some(mid);
+        r.conf = Confidence::Exact;
+        r.typed = Some(format!("{attr}: {}", short_name(&attr_cls)));
+        r
+    }
+
+    fn attr(&self, raw: &RawCall, caller: &Caller) -> Resolution {
+        let mut r = Resolution::default();
+        self.attr_from_locals(raw, caller, &mut r);
+        if r.chosen.is_none() {
+            self.attr_from_import(raw, caller, &mut r);
+        }
+        if r.chosen.is_none() {
+            self.attr_from_ctor(raw, caller, &mut r);
+        }
+        if r.chosen.is_none() {
+            self.attr_by_method(raw, &mut r);
+        }
+        r
+    }
+
+    fn attr_from_locals(&self, raw: &RawCall, caller: &Caller, r: &mut Resolution) {
+        let Some(recv) = &raw.recv else {
+            return;
+        };
+        let Some(target_cls) = self
+            .card_locals
+            .get(caller.from)
+            .and_then(|m| m.get(recv))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(mid) = self.b.find_method(&target_cls, &raw.target, 0) else {
+            return;
+        };
+        r.chosen = Some(mid);
+        r.conf = Confidence::Exact;
+        r.typed = Some(format!("{recv}: {}", short_name(&target_cls)));
+    }
+
+    fn attr_from_import(&self, raw: &RawCall, caller: &Caller, r: &mut Resolution) {
+        let Some(recv) = &raw.recv else {
+            return;
+        };
+        let Some(imp) = self.b.import_of(caller.from, &caller.module, recv).cloned() else {
+            return;
+        };
+        let owners: Vec<String> = if imp.module_import {
+            vec![imp.module.clone()]
+        } else {
+            vec![
+                format!("{}.{}", imp.module, imp.orig),
+                imp.module.clone(),
+            ]
+        };
+        for owner in &owners {
+            let want = Graph::card_id(owner, &raw.target);
+            if self.b.card_known(&want, &raw.target, self.by_name) {
+                r.chosen = Some(want);
+                r.conf = Confidence::Exact;
+                r.imported = Some(import_label(&imp));
+                return;
+            }
+        }
+        let cls_id = Graph::card_id(&imp.module, &imp.orig);
+        if let Some(mid) = self.b.find_method(&cls_id, &raw.target, 0) {
+            r.chosen = Some(mid);
+            r.conf = Confidence::Exact;
+            r.imported = Some(import_label(&imp));
+        }
+    }
+
+    fn attr_from_ctor(&self, raw: &RawCall, caller: &Caller, r: &mut Resolution) {
+        let Some(ctor) = &raw.ctor else {
+            return;
+        };
+        match self.b.resolve_class(caller.from, ctor) {
+            Some(cls_id) => {
+                if let Some(mid) = self.b.find_method(&cls_id, &raw.target, 0) {
+                    r.chosen = Some(mid);
+                    r.conf = Confidence::Exact;
+                    r.typed = Some(format!("{ctor}() → {}", short_name(&cls_id)));
+                }
+            }
+            None => {
+                if let Some(imp) = self.b.import_of(caller.from, &caller.module, ctor) {
+                    r.typed = Some(format!("{ctor}() → 外部（{}）", imp.module));
+                    r.imported = Some(import_label(imp));
+                }
+            }
+        }
+    }
+
+    fn attr_by_method(&self, raw: &RawCall, r: &mut Resolution) {
+        let Some(list) = self.by_method.get(&raw.target) else {
+            return;
+        };
+        if list.len() == 1 {
+            r.chosen = Some(list[0].clone());
+            r.conf = Confidence::Heur;
+        } else if list.len() > 1 {
+            r.candidates = list.iter().take(MAX_CANDIDATES).cloned().collect();
+            r.conf = Confidence::Poly;
+        }
+    }
+
+    fn name(&self, raw: &RawCall, caller: &Caller) -> Resolution {
+        let mut r = Resolution::default();
+        let same = Graph::card_id(&caller.module, &raw.target);
+        let mut label_from_import = None;
+        if self.b.cards.contains_key(&same) {
+            r.chosen = Some(same);
+            r.conf = Confidence::Exact;
+        } else if let Some(imp) = self.b.import_of(caller.from, &caller.module, &raw.target) {
+            let target_id = Graph::card_id(&imp.module, &imp.orig);
+            if self.b.card_known(&target_id, &raw.target, self.by_name) {
+                r.chosen = Some(target_id);
+                r.conf = Confidence::Exact;
+            }
+            label_from_import = Some(import_label(imp));
+        }
+        if r.chosen.is_none() {
+            if let Some(hit) = self.by_name.get(&raw.target) {
+                if hit.len() == 1 {
+                    r.chosen = Some(hit[0].clone());
+                    r.conf = Confidence::Heur;
+                }
+            }
+        }
+        if r.imported.is_none() {
+            r.imported = label_from_import;
+        }
+        r
+    }
 }
