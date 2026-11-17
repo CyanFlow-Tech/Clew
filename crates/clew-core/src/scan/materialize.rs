@@ -15,7 +15,6 @@ use std::sync::Arc;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::graph_build::{self, Builder};
-use super::model::SymbolKind;
 use super::walker;
 use crate::card::CardId;
 use crate::store::repo;
@@ -37,8 +36,6 @@ pub struct Materializer {
     by_method: Option<Arc<BTreeMap<String, Vec<String>>>>,
     by_class: Option<Arc<BTreeMap<String, Vec<String>>>>,
     by_qualname: Option<Arc<BTreeMap<String, Vec<String>>>>,
-    /// 搜索用的扁平行表，与上面的索引同一次读库建好
-    search: Option<Arc<crate::search::Index>>,
 }
 
 impl Materializer {
@@ -65,7 +62,6 @@ impl Materializer {
             by_method: None,
             by_class: None,
             by_qualname: None,
-            search: None,
         })
     }
 
@@ -77,15 +73,6 @@ impl Materializer {
 
     pub fn conn(&self) -> &Connection {
         &self.conn
-    }
-
-    /// 搜索用的行表，随全局索引一起建好。
-    pub fn search_index(&self) -> Option<Arc<crate::search::Index>> {
-        self.search.clone()
-    }
-
-    pub fn root_module_ready(&self, module: &str) -> bool {
-        self.done.contains(module)
     }
 
     /// 保证某个模块的卡片与调用点已在库里，返回写入的卡片数。
@@ -195,7 +182,6 @@ impl Materializer {
         self.by_method = Some(Arc::new(by_method));
         self.by_class = Some(Arc::new(by_class));
         self.by_qualname = Some(Arc::new(by_qualname));
-        self.search = Some(Arc::new(crate::search::build_index(&self.conn, self.project_id)?));
         Ok(())
     }
 
@@ -405,9 +391,4 @@ impl Materializer {
 /// 模块名到卡片 id 的映射工具，物化入口用它从一张卡找到所属文件。
 pub fn module_of_card(card_id: &str) -> Option<&str> {
     CardId::module_of(card_id)
-}
-
-#[allow(dead_code)]
-fn kind_is_class(kind: SymbolKind) -> bool {
-    kind == SymbolKind::Class
 }
