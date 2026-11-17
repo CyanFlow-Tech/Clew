@@ -62,6 +62,10 @@ Clew 是 Python 项目的入口地图。Rust 后端用 tree-sitter 解析，数�
 ```
 feat(ui): add settings for where Clew keeps its data
 
+What changed:
+1. The data directory and the interface cache are configurable.
+2. One page with two blocks; "default" only fills in the path.
+
 Files:
 - src-tauri/src/main.rs: builds the window in setup, adds the settings
   commands.
@@ -69,10 +73,6 @@ Files:
 
 Effects:
 - WebView2 stops writing under %LOCALAPPDATA%.
-
-What changed:
-1. The data directory and the interface cache are configurable.
-2. One page with two blocks; "default" only fills in the path.
 
 Tests:
 - cargo test -p clew-core.
@@ -82,9 +82,9 @@ Tests:
 - 全英文。单行 subject，空一行，然后 body。
 - subject：`type(scope): ` 加一句祈使句，小写开头，不加句号，60 字符以内。type 用 `feat` / `fix` / `perf` / `refactor` / `chore` / `docs`；scope 用模块名，比如 `ui`、`scan`、`search`、`core`、`cli`。
 - body 四段，顺序固定：
-  1. `Files:` 逐条列改动的文件，每条一句说这个文件改了什么。
-  2. `Effects:` 对用户可见的影响。没有就不写这一段。
-  3. `What changed:` 分点写这次改了什么，一点一句，别写成散文。
+  1. `What changed:` 分点写这次改了什么，一点一句，别写成散文。先写这个。
+  2. `Files:` 只列新增能力或行为变化的文件，每条一句说它改了什么。纯机械替换（同一处改法铺开到十几个文件）合并成一句，不要逐个列。
+  3. `Effects:` 对用户可见的影响。没有就不写这一段。
   4. `Tests:` 跑了什么，有就写，没有就不写这一段。
 - 短句优先。不写「我」，不写流水账，不复述 diff。
 - 手工折行，每行 75 列左右。
