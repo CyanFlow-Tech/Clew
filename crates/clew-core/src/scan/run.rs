@@ -16,6 +16,7 @@ use super::entry::{self, MODULE_ENTRY_QUALNAME};
 use super::graph_build::{self, SymbolMeta};
 use super::model::SymbolKind;
 use super::progress::weight;
+use super::walker;
 use crate::store::repo;
 
 #[derive(Debug, Default)]
@@ -45,7 +46,7 @@ pub fn scan_with(
     let root = std::fs::canonicalize(root)?;
 
     let t_build = Instant::now();
-    let built = graph_build::build_with(&root, include_venv, report)?;
+    let built = graph_build::build_with(walker::python(), &root, include_venv, report)?;
     let d_build = t_build.elapsed();
 
     let t_db = Instant::now();

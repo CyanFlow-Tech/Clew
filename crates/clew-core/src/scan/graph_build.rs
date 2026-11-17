@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use blake3::Hasher;
 use rayon::prelude::*;
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
 use super::model::{
     Call, CallKind, Card, CardKind, Confidence, Graph, Line, LineKind, MethodRef, SymbolKind,
@@ -152,6 +152,7 @@ pub struct Builder {
 }
 
 pub fn build_with(
+    lang: &dyn walker::Language,
     root: &Path,
     include_venv: bool,
     report: &mut dyn FnMut(&'static str, u64, u64, f32),
@@ -160,7 +161,7 @@ pub fn build_with(
     let root = std::fs::canonicalize(root)?;
 
     let t_walk = Instant::now();
-    let files = walker::collect_with(&root, include_venv);
+    let files = walker::collect_for(lang, &root, include_venv);
     let d_walk = t_walk.elapsed();
     report(
         "枚举文件",
@@ -184,7 +185,7 @@ pub fn build_with(
     for batch in files.chunks(CHUNK) {
         let parts: Vec<Builder> = batch
             .par_iter()
-            .map_init(new_parser, |parser, file| {
+            .map_init(|| lang.new_parser(), |parser, file| {
                 let mut part = Builder::default();
                 part.symbols_only = true;
 
@@ -558,7 +559,7 @@ impl Builder {
         });
     }
 
-    pub(crate) fn file(&mut self, file: &walker::PyFile, src: &[u8], root: Node, src_hash: String) {
+    pub(crate) fn file(&mut self, file: &walker::SourceFile, src: &[u8], root: Node, src_hash: String) {
         self.src = src.to_vec();
         self.module = file.module.clone();
         self.is_package = file
@@ -1494,14 +1495,6 @@ impl Builder {
 
 /// First `block` child of a compound statement.
 /// One parser per worker thread, built once by `map_init`.
-pub(crate) fn new_parser() -> Parser {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_python::LANGUAGE.into())
-        .expect("failed to load tree-sitter-python");
-    parser
-}
-
 fn nanos(d: Duration) -> u64 {
     d.as_nanos().min(u64::MAX as u128) as u64
 }

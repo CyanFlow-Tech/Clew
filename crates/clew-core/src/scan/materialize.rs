@@ -14,8 +14,9 @@ use std::sync::Arc;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::graph_build::{self, Builder};
+use super::graph_build::Builder;
 use super::walker;
+use super::walker::Language;
 use super::writer::{IndexWriter, SymbolIds};
 use crate::card::CardId;
 
@@ -212,14 +213,14 @@ impl Materializer {
         }
         let path = self.paths.get(module)?.clone();
         let source = std::fs::read_to_string(&path).ok()?;
-        let mut parser = graph_build::new_parser();
+        let mut parser = walker::python().new_parser();
         let tree = parser.parse(&source, None)?;
 
         let mut hasher = blake3::Hasher::new();
         hasher.update(source.as_bytes());
         let src_hash = hasher.finalize().to_hex().to_string();
 
-        let file = walker::PyFile {
+        let file = walker::SourceFile {
             path,
             module: module.to_string(),
             is_third_party: false,
