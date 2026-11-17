@@ -6,6 +6,7 @@ pub mod settings;
 pub mod snapshot;
 pub mod space;
 pub mod store;
+pub mod utils;
 pub mod walk;
 
 /// 给界面用的名字：模块级定义在索引里叫 `<module>`（`if __name__ == "__main__"`

@@ -96,3 +96,30 @@ Tests:
 
 **提交和推送都要单独允许**：用户没说「提交」就不 commit，没说「推」就不 push。改完、测完、汇报完就停在那里，不要自己判断「顺手提交一下比较好」。
 
+## 十、文件长度
+
+一个 `.rs` 文件的主逻辑不超过 300 行。
+
+- 主逻辑指 `#[cfg(test)]` 之前的行。测试部分不计入。
+- `tests/` 目录下的文件整体是测试，不参与统计。
+- 超了就按职责拆成模块。不要靠删注释、压行、把多行表达式挤成一行来凑数——那只是把行数藏起来，复杂度没变。
+- 测试体比实现体长时，把测试挪到 `#[cfg(test)] mod tests;` 指向的同目录文件，主逻辑行数不受影响。
+
+提交前跑 `.\tools\check-lines.ps1`，它列出主逻辑超过 300 行的文件和超出多少。有新增或改得更长的，先拆再提交。
+
+存量超限文件在这一节列出，改动它们时顺手拆，不要往上加。清单随拆分更新：
+
+```
+crates/clew-core/src/scan/graph_build.rs   2046
+crates/clew-core/src/walk.rs                946
+src-tauri/src/main.rs                       939
+crates/clew-core/src/snapshot.rs            705
+crates/clew-cli/src/main.rs                 673
+crates/clew-core/src/search.rs              542
+crates/clew-core/src/store/repo.rs          449
+crates/clew-cli/src/walk.rs                 416
+crates/clew-core/src/scan/model.rs          400
+crates/clew-core/src/space.rs               336
+crates/clew-core/src/scan/materialize.rs    330
+```
+

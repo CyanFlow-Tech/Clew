@@ -1,84 +1,13 @@
-//! Interactive descent over the call graph: a numbered outline, no TUI framework.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
 use clew_core::store::Conn;
-use clew_core::walk::{self, EdgeView, NodeView};
+use clew_core::walk::{self, NodeView};
+use super::labels::*;
+use super::HELP;
 
-pub struct Options {
-    /// Entry to start from: `qualname` or `module:qualname`
-    pub entry: Option<String>,
-}
 
-const HELP: &str = "编号 进入    b 返回    c 看代码    a 看实参    n 记笔记    q 退出";
-
-pub fn run(conn: &Conn, project_id: i64, opts: Options) -> anyhow::Result<()> {
-    let root = match opts.entry {
-        Some(needle) => {
-            let hits = walk::find(conn, project_id, &needle)?;
-            match hits.len() {
-                0 => anyhow::bail!("no symbol matches `{needle}`"),
-                1 => hits[0],
-                _ => match choose(conn, &hits, &format!("`{needle}` 命中多处"))? {
-                    Some(id) => id,
-                    None => return Ok(()),
-                },
-            }
-        }
-        None => match pick_entry(conn, project_id)? {
-            Some(id) => id,
-            None => return Ok(()),
-        },
-    };
-
-    Tree::new(conn, root)?.repl()
-}
-
-fn pick_entry(conn: &Conn, project_id: i64) -> anyhow::Result<Option<i64>> {
-    let entries = walk::entry_points(conn, project_id)?;
-    if entries.is_empty() {
-        println!("没有入口点，先跑 clew scan");
-        return Ok(None);
-    }
-    println!("入口点：");
-    for (i, (_, module, qualname, conf)) in entries.iter().enumerate() {
-        println!("  [{:<2}] {:<8} {module}:{qualname}", i + 1, conf);
-    }
-    print!("选择 1-{} 或直接回车退出: ", entries.len());
-    io::stdout().flush()?;
-
-    let mut line = String::new();
-    if io::stdin().read_line(&mut line)? == 0 {
-        return Ok(None);
-    }
-    let Ok(n) = line.trim().parse::<usize>() else {
-        return Ok(None);
-    };
-    Ok(entries.get(n - 1).map(|e| e.0))
-}
-
-fn choose(conn: &Conn, ids: &[i64], prompt: &str) -> anyhow::Result<Option<i64>> {
-    println!("{prompt}：");
-    for (i, id) in ids.iter().enumerate() {
-        if let Some(v) = walk::node(conn, *id)? {
-            println!("  [{:<2}] {}:{}  ({})", i + 1, v.module, v.qualname, v.kind);
-        }
-    }
-    print!("选择 1-{} 或直接回车退出: ", ids.len());
-    io::stdout().flush()?;
-
-    let mut line = String::new();
-    if io::stdin().read_line(&mut line)? == 0 {
-        return Ok(None);
-    }
-    let Ok(n) = line.trim().parse::<usize>() else {
-        return Ok(None);
-    };
-    Ok(ids.get(n - 1).copied())
-}
-
-struct Tree<'a> {
+pub(crate) struct Tree<'a> {
     conn: &'a Conn,
     root: i64,
     focus: i64,
@@ -91,7 +20,7 @@ struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
-    fn new(conn: &'a Conn, root: i64) -> anyhow::Result<Self> {
+    pub(crate) fn new(conn: &'a Conn, root: i64) -> anyhow::Result<Self> {
         let Some(view) = walk::node(conn, root)? else {
             anyhow::bail!("symbol {root} not found in the index");
         };
@@ -106,7 +35,7 @@ impl<'a> Tree<'a> {
         })
     }
 
-    fn repl(mut self) -> anyhow::Result<()> {
+    pub(crate) fn repl(mut self) -> anyhow::Result<()> {
         let stdin = io::stdin();
         loop {
             self.render();
@@ -134,7 +63,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    fn ensure(&mut self, id: i64) {
+    pub(crate) fn ensure(&mut self, id: i64) {
         if self.cache.contains_key(&id) {
             return;
         }
@@ -143,7 +72,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    fn descend(&mut self, n: usize) {
+    pub(crate) fn descend(&mut self, n: usize) {
         let Some(&dst) = self.index.get(n.wrapping_sub(1)) else {
             println!("没有编号 {n}");
             return;
@@ -155,14 +84,14 @@ impl<'a> Tree<'a> {
         self.focus = dst;
     }
 
-    fn up(&mut self) {
+    pub(crate) fn up(&mut self) {
         match self.parent.get(&self.focus) {
             Some(&p) => self.focus = p,
             None => println!("已在起点"),
         }
     }
 
-    fn add_note(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn add_note(&mut self) -> anyhow::Result<()> {
         let Some(view) = self.cache.get(&self.focus) else {
             return Ok(());
         };
@@ -182,7 +111,7 @@ impl<'a> Tree<'a> {
         Ok(())
     }
 
-    fn render(&mut self) {
+    pub(crate) fn render(&mut self) {
         let mut index = Vec::new();
         self.collect(self.root, &mut index);
         self.index = index;
@@ -226,7 +155,7 @@ impl<'a> Tree<'a> {
         println!("{HELP}");
     }
 
-    fn path(&self) -> String {
+    pub(crate) fn path(&self) -> String {
         let mut chain = vec![self.focus];
         let mut cur = self.focus;
         while let Some(&p) = self.parent.get(&cur) {
@@ -241,7 +170,7 @@ impl<'a> Tree<'a> {
             .join(" › ")
     }
 
-    fn collect(&self, id: i64, index: &mut Vec<i64>) {
+    pub(crate) fn collect(&self, id: i64, index: &mut Vec<i64>) {
         let Some(view) = self.cache.get(&id) else {
             return;
         };
@@ -257,7 +186,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    fn draw(&self, id: i64, prefix: &str, out: &mut Vec<String>) {
+    pub(crate) fn draw(&self, id: i64, prefix: &str, out: &mut Vec<String>) {
         let Some(view) = self.cache.get(&id) else {
             return;
         };
@@ -307,7 +236,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    fn print_code(&self) {
+    pub(crate) fn print_code(&self) {
         let Some(view) = self.cache.get(&self.focus) else {
             return;
         };
@@ -334,7 +263,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    fn print_args(&self) {
+    pub(crate) fn print_args(&self) {
         let Some(view) = self.cache.get(&self.focus) else {
             return;
         };
@@ -367,50 +296,4 @@ impl<'a> Tree<'a> {
             );
         }
     }
-}
-
-/// Third-party symbols are shown but never entered.
-fn enterable(edge: &EdgeView) -> bool {
-    !edge.is_third_party
-}
-
-/// Bare name, plus the module when it differs from the caller's.
-fn label(caller: &NodeView, edge: &EdgeView) -> String {
-    if edge.module == caller.module {
-        edge.short().to_string()
-    } else {
-        format!("{}  ·{}", edge.qualname, edge.module)
-    }
-}
-
-/// `×3  L141, L146, L150`
-fn sites(edge: &EdgeView) -> String {
-    let mut lns = Vec::new();
-    for hit in &edge.hits {
-        let tag = format!("L{}", hit.ln);
-        if !lns.contains(&tag) {
-            lns.push(tag);
-        }
-    }
-    let shown = if lns.len() > 3 {
-        format!("{}, …", lns[..3].join(", "))
-    } else {
-        lns.join(", ")
-    };
-    if edge.hits.len() > 1 {
-        format!("×{}  {shown}", edge.hits.len())
-    } else {
-        shown
-    }
-}
-
-/// `  ⚠ 候选 A / B` when dispatch stayed dynamic.
-fn poly_note(edge: &EdgeView) -> Option<String> {
-    let hit = edge.hits.iter().find(|h| !h.candidates.is_empty())?;
-    let names: Vec<&str> = hit
-        .candidates
-        .iter()
-        .map(|c| c.rsplit('.').next().unwrap_or(c))
-        .collect();
-    Some(format!("  ⚠ 候选 {}", names.join(" / ")))
 }
