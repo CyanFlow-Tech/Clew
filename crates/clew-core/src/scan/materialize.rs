@@ -103,10 +103,10 @@ impl Materializer {
             }
         }
         self.load_global_indexes()?;
-        acc.global_by_name = self.by_name.clone();
-        acc.global_by_method = self.by_method.clone();
-        acc.global_by_class = self.by_class.clone();
-        acc.global_by_qualname = self.by_qualname.clone();
+        acc.global.by_name = self.by_name.clone();
+        acc.global.by_method = self.by_method.clone();
+        acc.global.by_class = self.by_class.clone();
+        acc.global.by_qualname = self.by_qualname.clone();
         acc.resolve();
 
         let written = self.persist(module, &acc)?;

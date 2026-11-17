@@ -94,7 +94,7 @@ const BUILTINS: &[&str] = &[
 const LINE_LIMIT: usize = 96;
 
 #[derive(Debug, Clone)]
-struct ImportInfo {
+pub(crate) struct ImportInfo {
     module: String,
     orig: String,
     local: String,
@@ -103,7 +103,7 @@ struct ImportInfo {
 }
 
 #[derive(Debug, Clone)]
-struct RawCall {
+pub(crate) struct RawCall {
     target: String,
     kind: CallKind,
     recv: Option<String>,
@@ -113,48 +113,39 @@ struct RawCall {
     line: u32,
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct RawGraph {
+    pub(crate) cards: BTreeMap<String, Card>,
+    pub(crate) calls: BTreeMap<String, Call>,
+    pub(crate) raw_calls: BTreeMap<String, RawCall>,
+    pub(crate) imports: BTreeMap<String, BTreeMap<String, ImportInfo>>,
+    pub(crate) card_imports: BTreeMap<String, BTreeMap<String, ImportInfo>>,
+    pub(crate) methods: BTreeMap<(String, String), BTreeMap<String, String>>,
+    pub(crate) class_bases: BTreeMap<String, (String, Vec<String>)>,
+    pub(crate) class_attrs: BTreeMap<String, BTreeMap<String, String>>,
+    pub(crate) card_locals: BTreeMap<String, BTreeMap<String, String>>,
+    pub(crate) class_ids: BTreeMap<(String, String), String>,
+    pub(crate) class_by_qualname: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct GlobalIndex {
+    pub(crate) by_name: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    pub(crate) by_method: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    pub(crate) by_class: Option<Arc<BTreeMap<String, Vec<String>>>>,
+    pub(crate) by_qualname: Option<Arc<BTreeMap<String, Vec<String>>>>,
+}
+
 #[derive(Clone)]
 pub struct Builder {
     src: Vec<u8>,
     module: String,
-    /// 这个文件是包的 `__init__.py`。相对 import 的基址要按包算，不能先退一层。
     is_package: bool,
-    cards: BTreeMap<String, Card>,
-    calls: BTreeMap<String, Call>,
-    raw_calls: BTreeMap<String, RawCall>,
-    /// module -> local name -> import info
-    imports: BTreeMap<String, BTreeMap<String, ImportInfo>>,
-    /// card id -> local name -> import info. 函数体里的 import 只对那个函数生效，
-    /// 但它同样决定 `skill_ledger.get_entry(...)` 指向哪里。
-    card_imports: BTreeMap<String, BTreeMap<String, ImportInfo>>,
-    /// (module, class) -> method name -> card id
-    methods: BTreeMap<(String, String), BTreeMap<String, String>>,
-    /// class card id -> (module, base class names)
-    class_bases: BTreeMap<String, (String, Vec<String>)>,
-    /// class card id -> attribute name -> raw class name reference
-    class_attrs: BTreeMap<String, BTreeMap<String, String>>,
-    /// card id -> local variable -> raw class name reference
-    card_locals: BTreeMap<String, BTreeMap<String, String>>,
-    class_ids: BTreeMap<(String, String), String>,
-    /// class qualname -> card id, for the last-resort match in `resolve_class`.
-    /// Scanning `class_ids` per lookup is quadratic on a large project.
-    class_by_qualname: BTreeMap<String, String>,
-    /// module -> body lines of its `__main__` guard
+    pub(crate) graph: RawGraph,
     module_cards: BTreeMap<String, Vec<Line>>,
-    /// Counter for the `%N` temporaries, unique within one card
     temp_counter: usize,
-    /// Skip card bodies and call sites, keep only definitions and imports.
-    /// The GUI uses this for a fast first index and materialises cards later.
     symbols_only: bool,
-    /// 外部注入的全项目索引。只解析一个文件时，靠它判断「这个名字全项目唯一」
-    /// 与「同名方法有哪些候选」，否则这些调用只能落成未解析。
-    pub(crate) global_by_name: Option<Arc<BTreeMap<String, Vec<String>>>>,
-    pub(crate) global_by_method: Option<Arc<BTreeMap<String, Vec<String>>>>,
-    /// 全项目 bare 类名 -> 类卡 id。按需物化时目标类不在场，靠它判断类型。
-    pub(crate) global_by_class: Option<Arc<BTreeMap<String, Vec<String>>>>,
-    /// 全项目 qualname -> 卡 id，只收类与方法。类卡不在场时查方法用。
-    pub(crate) global_by_qualname: Option<Arc<BTreeMap<String, Vec<String>>>>,
-    /// rows to persist
+    pub(crate) global: GlobalIndex,
     out_modules: Vec<ModuleMeta>,
     out_symbols: Vec<SymbolMeta>,
     out_classes: Vec<ClassMeta>,
@@ -259,7 +250,7 @@ pub fn build_with(
     );
 
     let mut imports = Vec::new();
-    for (module, table) in &builder.imports {
+    for (module, table) in &builder.graph.imports {
         for info in table.values() {
             imports.push(ImportMeta {
                 module: module.clone(),
@@ -274,8 +265,8 @@ pub fn build_with(
 
     Ok(Built {
         graph: Graph {
-            cards: builder.cards,
-            calls: builder.calls,
+            cards: builder.graph.cards,
+            calls: builder.graph.calls,
         },
         modules: builder.out_modules,
         symbols: builder.out_symbols,
@@ -285,29 +276,17 @@ pub fn build_with(
     })
 }
 
-impl Default for Builder {    fn default() -> Self {
+impl Default for Builder {
+    fn default() -> Self {
         Self {
             src: Vec::new(),
             module: String::new(),
             is_package: false,
-            cards: BTreeMap::new(),
-            calls: BTreeMap::new(),
-            raw_calls: BTreeMap::new(),
-            imports: BTreeMap::new(),
-            card_imports: BTreeMap::new(),
-            methods: BTreeMap::new(),
-            class_bases: BTreeMap::new(),
-            class_attrs: BTreeMap::new(),
-            card_locals: BTreeMap::new(),
-            class_ids: BTreeMap::new(),
-            class_by_qualname: BTreeMap::new(),
+            graph: RawGraph::default(),
             module_cards: BTreeMap::new(),
             temp_counter: 0,
             symbols_only: false,
-            global_by_name: None,
-            global_by_method: None,
-            global_by_class: None,
-            global_by_qualname: None,
+            global: GlobalIndex::default(),
             out_modules: Vec::new(),
             out_symbols: Vec::new(),
             out_classes: Vec::new(),
@@ -322,11 +301,11 @@ impl Builder {
     }
 
     pub(crate) fn cards(&self) -> &BTreeMap<String, Card> {
-        &self.cards
+        &self.graph.cards
     }
 
     pub(crate) fn calls(&self) -> &BTreeMap<String, Call> {
-        &self.calls
+        &self.graph.calls
     }
 
     /// `__main__` guard bodies, keyed by module. They belong to the module entry
@@ -342,7 +321,7 @@ impl Builder {
     /// Modules this file imports from, used to decide what to parse alongside it.
     pub(crate) fn imported_modules(&self) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
-        for table in self.imports.values() {
+        for table in self.graph.imports.values() {
             for info in table.values() {
                 out.insert(info.module.clone());
             }
@@ -356,28 +335,28 @@ impl Builder {
     /// here before resolution. Every cross-file map keys on module names, so
     /// extending them is enough.
     pub(crate) fn merge(&mut self, other: Builder) {
-        self.cards.extend(other.cards);
-        self.calls.extend(other.calls);
-        self.raw_calls.extend(other.raw_calls);
-        for (k, v) in other.imports {
-            self.imports.entry(k).or_default().extend(v);
+        self.graph.cards.extend(other.graph.cards);
+        self.graph.calls.extend(other.graph.calls);
+        self.graph.raw_calls.extend(other.graph.raw_calls);
+        for (k, v) in other.graph.imports {
+            self.graph.imports.entry(k).or_default().extend(v);
         }
-        for (k, v) in other.methods {
-            self.methods.entry(k).or_default().extend(v);
+        for (k, v) in other.graph.methods {
+            self.graph.methods.entry(k).or_default().extend(v);
         }
-        self.class_bases.extend(other.class_bases);
-        for (k, v) in other.class_attrs {
-            self.class_attrs.entry(k).or_default().extend(v);
+        self.graph.class_bases.extend(other.graph.class_bases);
+        for (k, v) in other.graph.class_attrs {
+            self.graph.class_attrs.entry(k).or_default().extend(v);
         }
-        for (k, v) in other.card_locals {
-            self.card_locals.entry(k).or_default().extend(v);
+        for (k, v) in other.graph.card_locals {
+            self.graph.card_locals.entry(k).or_default().extend(v);
         }
-        for (k, v) in other.card_imports {
-            self.card_imports.entry(k).or_default().extend(v);
+        for (k, v) in other.graph.card_imports {
+            self.graph.card_imports.entry(k).or_default().extend(v);
         }
-        self.class_ids.extend(other.class_ids);
-        for (k, v) in other.class_by_qualname {
-            self.class_by_qualname.entry(k).or_insert(v);
+        self.graph.class_ids.extend(other.graph.class_ids);
+        for (k, v) in other.graph.class_by_qualname {
+            self.graph.class_by_qualname.entry(k).or_insert(v);
         }
         for (k, v) in other.module_cards {
             self.module_cards.entry(k).or_default().extend(v);
@@ -615,14 +594,14 @@ impl Builder {
             match item.kind() {
                 "import_statement" => {
                     let found = self.collect_import(item);
-                    self.imports
+                    self.graph.imports
                         .entry(self.module.clone())
                         .or_default()
                         .extend(found);
                 }
                 "import_from_statement" => {
                     let found = self.collect_import_from(item);
-                    self.imports
+                    self.graph.imports
                         .entry(self.module.clone())
                         .or_default()
                         .extend(found);
@@ -657,7 +636,7 @@ impl Builder {
         }
         // module-level `n1 = NNetWrapper(g)` must feed call resolution too
         if !locals.is_empty() {
-            self.card_locals.insert(owner, locals);
+            self.graph.card_locals.insert(owner, locals);
         }
     }
 
@@ -825,7 +804,7 @@ impl Builder {
         if self.symbols_only {
             self.push_symbol(node, &qualname, SymbolKind::of_card(kind));
             if in_class {
-                self.methods
+                self.graph.methods
                     .entry((self.module.clone(), scope.to_string()))
                     .or_default()
                     .insert(name, id);
@@ -853,7 +832,7 @@ impl Builder {
         }
         let title = format!("{}({})", crate::display_qual(&qualname), params.join(", "));
 
-        self.cards.insert(
+        self.graph.cards.insert(
             id.clone(),
             Card {
                 id: id.clone(),
@@ -873,13 +852,13 @@ impl Builder {
         );
         self.push_symbol(node, &qualname, SymbolKind::of_card(kind));
         if in_class {
-            self.methods
+            self.graph.methods
                 .entry((self.module.clone(), scope.to_string()))
                 .or_default()
                 .insert(name, id.clone());
         }
         if !locals.is_empty() {
-            self.card_locals.insert(id, locals);
+            self.graph.card_locals.insert(id, locals);
         }
     }
 
@@ -925,12 +904,12 @@ impl Builder {
         // 只建符号时：类体不展开，方法只登记名字与位置
         if self.symbols_only {
             self.push_symbol(node, &qualname, SymbolKind::Class);
-            self.class_ids
+            self.graph.class_ids
                 .insert((self.module.clone(), qualname.clone()), id.clone());
-            self.class_by_qualname
+            self.graph.class_by_qualname
                 .entry(qualname.clone())
                 .or_insert_with(|| id.clone());
-            self.class_bases
+            self.graph.class_bases
                 .insert(id.clone(), (self.module.clone(), bases.clone()));
             for def in &method_defs {
                 self.add_function(*def, &qualname, true);
@@ -968,7 +947,7 @@ impl Builder {
         }
 
         let title = format!("{name}({})", ctor_params.join(", "));
-        self.cards.insert(
+        self.graph.cards.insert(
             id.clone(),
             Card {
                 id: id.clone(),
@@ -994,16 +973,16 @@ impl Builder {
             bases: bases.clone(),
             ctor: ctor_id,
         });
-        self.class_ids
+        self.graph.class_ids
             .insert((self.module.clone(), qualname.clone()), id.clone());
-        self.class_by_qualname
+        self.graph.class_by_qualname
             .entry(qualname.clone())
             .or_insert_with(|| id.clone());
-        self.class_bases
+        self.graph.class_bases
             .insert(id.clone(), (self.module.clone(), bases));
-        self.class_attrs.insert(id.clone(), ctor_attrs);
+        self.graph.class_attrs.insert(id.clone(), ctor_attrs);
         if !ctor_locals.is_empty() {
-            self.card_locals.insert(id.clone(), ctor_locals);
+            self.graph.card_locals.insert(id.clone(), ctor_locals);
         }
 
         // method bodies inside a class become cards of their own
@@ -1128,7 +1107,7 @@ impl Builder {
                             self.collect_import_from(stmt)
                         };
                         if !found.is_empty() {
-                            self.card_imports
+                            self.graph.card_imports
                                 .entry(owner.to_string())
                                 .or_default()
                                 .extend(found);
@@ -1264,7 +1243,7 @@ impl Builder {
             }
         }
 
-        self.raw_calls.insert(
+        self.graph.raw_calls.insert(
             cs_id.clone(),
             RawCall {
                 target,
@@ -1276,7 +1255,7 @@ impl Builder {
                 line: call.start_position().row as u32 + 1,
             },
         );
-        self.calls.insert(
+        self.graph.calls.insert(
             cs_id,
             Call {
                 from: owner.to_string(),
@@ -1296,11 +1275,11 @@ impl Builder {
 
     // ── resolution ────────────────────────────────────────────────
     pub(crate) fn resolve(&mut self) {
-        let by_name: Arc<BTreeMap<String, Vec<String>>> = match &self.global_by_name {
+        let by_name: Arc<BTreeMap<String, Vec<String>>> = match &self.global.by_name {
             Some(shared) => shared.clone(),
             None => Arc::new({
                 let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
-                for (id, card) in &self.cards {
+                for (id, card) in &self.graph.cards {
                     let bare = card
                         .qualname
                         .rsplit('.')
@@ -1316,7 +1295,7 @@ impl Builder {
         let (by_module_method, local_by_method) = {
             let mut local: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
             let mut global: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for ((module, _class), ms) in &self.methods {
+            for ((module, _class), ms) in &self.graph.methods {
                 for (name, id) in ms {
                     local
                         .entry((module.clone(), name.clone()))
@@ -1335,13 +1314,13 @@ impl Builder {
             }
             (local, global)
         };
-        let by_method: Arc<BTreeMap<String, Vec<String>>> = match &self.global_by_method {
+        let by_method: Arc<BTreeMap<String, Vec<String>>> = match &self.global.by_method {
             Some(shared) => shared.clone(),
             None => Arc::new(local_by_method),
         };
 
         let mut card_locals: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-        for (card_id, vars) in self.card_locals.clone() {
+        for (card_id, vars) in self.graph.card_locals.clone() {
             let mut resolved = BTreeMap::new();
             for (var, raw) in vars {
                 if let Some(cls) = self.resolve_class(&card_id, &raw) {
@@ -1354,7 +1333,7 @@ impl Builder {
         }
 
         let mut class_attrs: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-        for (cls_id, attrs) in self.class_attrs.clone() {
+        for (cls_id, attrs) in self.graph.class_attrs.clone() {
             let mut resolved = BTreeMap::new();
             for (attr, raw) in attrs {
                 if let Some(target) = self.resolve_class(&cls_id, &raw) {
@@ -1364,9 +1343,9 @@ impl Builder {
             class_attrs.insert(cls_id, resolved);
         }
 
-        let raw_calls = std::mem::take(&mut self.raw_calls);
+        let raw_calls = std::mem::take(&mut self.graph.raw_calls);
         for (cs_id, raw) in raw_calls {
-            let mut call = self.calls.remove(&cs_id).unwrap_or(Call {
+            let mut call = self.graph.calls.remove(&cs_id).unwrap_or(Call {
                 from: String::new(),
                 target: String::new(),
                 kind: CallKind::Other,
@@ -1384,7 +1363,7 @@ impl Builder {
             call.recv = raw.recv.clone();
             call.ln = raw.line;
 
-            let caller = Caller::new(&call.from, &self.cards);
+            let caller = Caller::new(&call.from, &self.graph.cards);
             let resolution = {
                 let resolver = Resolver {
                     b: self,
@@ -1398,18 +1377,18 @@ impl Builder {
             };
 
             if let Some(to) = &resolution.chosen {
-                call.args = bind_args(&self.cards, &raw, to);
+                call.args = bind_args(&self.graph.cards, &raw, to);
             }
             call.to = resolution.chosen;
             call.conf = resolution.conf;
             call.candidates = resolution.candidates;
             call.imported = resolution.imported;
             call.typed = resolution.typed;
-            self.calls.insert(cs_id, call);
+            self.graph.calls.insert(cs_id, call);
         }
 
         for (card_id, vars) in card_locals {
-            if let Some(card) = self.cards.get_mut(&card_id) {
+            if let Some(card) = self.graph.cards.get_mut(&card_id) {
                 card.locals = vars;
             }
         }
@@ -1419,12 +1398,12 @@ impl Builder {
     /// 这个 id 是不是一个类。类卡可能还没物化（按需模式下只读了几个文件），
     /// 那就查全项目的类表。
     fn is_class(&self, id: &str) -> bool {
-        if let Some(c) = self.cards.get(id) {
+        if let Some(c) = self.graph.cards.get(id) {
             return c.kind == CardKind::Class;
         }
         let qualname = CardId::qualname_of(id).unwrap_or(id);
         let bare = qualname.rsplit('.').next().unwrap_or(qualname);
-        self.global_by_class
+        self.global.by_class
             .as_ref()
             .and_then(|m| m.get(bare))
             .map_or(false, |ids| ids.iter().any(|x| x == id))
@@ -1432,7 +1411,7 @@ impl Builder {
 
     /// bare 类名 -> 类卡 id，只接受唯一命中。
     fn global_class(&self, name: &str) -> Option<String> {
-        let ids = self.global_by_class.as_ref()?.get(name)?;
+        let ids = self.global.by_class.as_ref()?.get(name)?;
         if ids.len() == 1 {
             return Some(ids[0].clone());
         }
@@ -1451,7 +1430,7 @@ impl Builder {
                 return Some(id);
             }
         }
-        self.class_by_qualname
+        self.graph.class_by_qualname
             .get(raw)
             .cloned()
             .or_else(|| self.global_class(raw))
@@ -1460,16 +1439,16 @@ impl Builder {
     /// 名称在这个位置解析到哪个导入：先看所在卡片自己的 import，
     /// 再看模块的。函数体里 `from tools import skill_ledger` 不会出现在模块表里。
     fn import_of(&self, from_card: &str, module: &str, name: &str) -> Option<&ImportInfo> {
-        self.card_imports
+        self.graph.card_imports
             .get(from_card)
             .and_then(|m| m.get(name))
-            .or_else(|| self.imports.get(module).and_then(|m| m.get(name)))
+            .or_else(|| self.graph.imports.get(module).and_then(|m| m.get(name)))
     }
 
-    /// 这张卡在项目里存在吗。按需物化时别的模块还没解析，只看 `self.cards`
+    /// 这张卡在项目里存在吗。按需物化时别的模块还没解析，只看 `self.graph.cards`
     /// 会把项目里确实存在的目标判成不存在，所以再查一次全项目的名字表。
     fn card_known(&self, id: &str, bare: &str, by_name: &BTreeMap<String, Vec<String>>) -> bool {
-        if self.cards.contains_key(id) {
+        if self.graph.cards.contains_key(id) {
             return true;
         }
         by_name
@@ -1481,12 +1460,12 @@ impl Builder {
         if depth > 6 {
             return None;
         }
-        let Some(card) = self.cards.get(class_id) else {
+        let Some(card) = self.graph.cards.get(class_id) else {
             // 类卡还没物化：按全项目的 qualname 直接找这个方法，
             // 只接受唯一命中，继承链这时候查不到。
             let cid = CardId::parse(class_id)?;
             let want = format!("{}.{name}", cid.qualname());
-            let ids = self.global_by_qualname.as_ref()?.get(&want)?;
+            let ids = self.global.by_qualname.as_ref()?.get(&want)?;
             return if ids.len() == 1 {
                 Some(ids[0].clone())
             } else {
@@ -1494,15 +1473,16 @@ impl Builder {
             };
         };
         if let Some(mid) = self
+            .graph
             .methods
             .get(&(card.module.clone(), card.qualname.clone()))
             .and_then(|m| m.get(name))
         {
             return Some(mid.clone());
         }
-        let bases = self.class_bases.get(class_id)?.1.clone();
+        let bases = self.graph.class_bases.get(class_id)?.1.clone();
         for base in bases {
-            if let Some(base_id) = self.class_ids.get(&(card.module.clone(), base)) {
+            if let Some(base_id) = self.graph.class_ids.get(&(card.module.clone(), base)) {
                 if let Some(hit) = self.find_method(base_id, name, depth + 1) {
                     return Some(hit);
                 }
@@ -1884,6 +1864,7 @@ impl Resolver<'_> {
         };
         let Some(mid) = self
             .b
+            .graph
             .methods
             .get(&(caller.module.clone(), cls))
             .and_then(|m| m.get(&raw.target))
@@ -1916,6 +1897,7 @@ impl Resolver<'_> {
         };
         let Some(cls_id) = self
             .b
+            .graph
             .class_ids
             .get(&(caller.module.clone(), cls))
             .cloned()
@@ -2044,7 +2026,7 @@ impl Resolver<'_> {
         let mut r = Resolution::default();
         let same = Graph::card_id(&caller.module, &raw.target);
         let mut label_from_import = None;
-        if self.b.cards.contains_key(&same) {
+        if self.b.graph.cards.contains_key(&same) {
             r.chosen = Some(same);
             r.conf = Confidence::Exact;
         } else if let Some(imp) = self.b.import_of(caller.from, &caller.module, &raw.target) {
