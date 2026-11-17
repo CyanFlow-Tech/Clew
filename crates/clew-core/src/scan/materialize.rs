@@ -16,8 +16,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::graph_build::{self, Builder};
 use super::walker;
+use super::writer::{IndexWriter, SymbolIds};
 use crate::card::CardId;
-use crate::store::repo;
 
 /// 单个文件最多顺带解析这么多个依赖模块，防止一个函数拽进半个项目。
 const MAX_DEPS: usize = 100;
@@ -65,14 +65,16 @@ impl Materializer {
         })
     }
 
-    /// 提前建好全项目索引。放在打开项目之后、第一次点击之前，
-    /// 免得第一次展开多等两百毫秒。
     pub fn preload(&mut self) -> anyhow::Result<()> {
         self.load_global_indexes()
     }
 
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    pub fn root_module_ready(&self, module: &str) -> bool {
+        self.done.contains(module)
     }
 
     /// 保证某个模块的卡片与调用点已在库里，返回写入的卡片数。
@@ -233,7 +235,7 @@ impl Materializer {
     fn persist(&self, module: &str, built: &Builder) -> anyhow::Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
 
-        let mut ids: HashMap<String, i64> = HashMap::new();
+        let mut local: HashMap<String, i64> = HashMap::new();
         {
             let mut stmt = tx.prepare(
                 "SELECT qualname, id FROM symbol WHERE project_id = ?1 AND module = ?2",
@@ -243,16 +245,13 @@ impl Materializer {
             })?;
             for row in rows {
                 let (qualname, id) = row?;
-                ids.insert(qualname, id);
+                local.insert(qualname, id);
             }
         }
 
         let prefix = format!("{module}:");
-        let mut written = 0usize;
 
-        // 调用目标多半在别的模块里，本模块的 symbol id 表查不到。
-        // 把这一模块引用到的外部卡片 id 收齐，一次查完再写。
-        let mut external: HashMap<String, i64> = HashMap::new();
+        let mut external: HashMap<(String, String), i64> = HashMap::new();
         {
             let mut need: BTreeSet<String> = BTreeSet::new();
             for call in built.calls().values() {
@@ -301,87 +300,23 @@ impl Materializer {
                     )
                     .optional()?
                 {
-                    external.insert(card_id, id);
+                    external.insert(
+                        (cid.module().to_string(), cid.qualname().to_string()),
+                        id,
+                    );
                 }
             }
         }
 
-        /// 先查本模块，再查外部收集到的映射。
-        fn pick(
-            card_id: &str,
-            prefix: &str,
-            ids: &HashMap<String, i64>,
-            external: &HashMap<String, i64>,
-        ) -> Option<i64> {
-            if let Some(rest) = card_id.strip_prefix(prefix) {
-                return ids.get(rest).copied();
-            }
-            external.get(card_id).copied()
-        }
+        let ids = SymbolIds::new(module, local, external);
+        let writer = IndexWriter::new(&tx, self.project_id, &ids);
 
-        for (card_id, card) in built.cards() {
-            if !card_id.starts_with(&prefix) {
-                continue;
-            }
-            let Some(&sym_id) = ids.get(&card.qualname) else {
-                continue;
-            };
-            for (ord, name) in card.params.iter().enumerate() {
-                repo::insert_card_param(&tx, sym_id, ord, name)?;
-            }
-            for (ord, line) in card.lines.iter().enumerate() {
-                repo::insert_card_line(&tx, sym_id, ord, line)?;
-            }
-            for (var, class_card) in &card.locals {
-                let class_symbol = pick(class_card, &prefix, &ids, &external);
-                repo::insert_local_type(&tx, sym_id, var, class_card, class_symbol)?;
-            }
-            if card.kind == super::model::CardKind::Class {
-                let ctor = card
-                    .ctor
-                    .as_deref()
-                    .and_then(|id| pick(id, &prefix, &ids, &external));
-                repo::insert_class_meta(&tx, sym_id, &card.module, &card.qualname, ctor)?;
-                for (ord, base) in card.bases.iter().enumerate() {
-                    let base_id = ids.get(base).copied();
-                    repo::insert_class_base(&tx, sym_id, ord, base, base_id)?;
-                }
-            }
-            written += 1;
-        }
-
-        // `if __name__ == "__main__"` 的正文属于模块入口那个伪符号，
-        // 不写进去入口卡就是一张空卡
+        let written = writer.cards(built.cards(), |id| id.starts_with(&prefix))?;
         if let Some(lines) = built.module_cards().get(module) {
-            if let Some(&sym_id) = ids.get(super::entry::MODULE_ENTRY_QUALNAME) {
-                for (ord, line) in lines.iter().enumerate() {
-                    repo::insert_card_line(&tx, sym_id, ord, line)?;
-                }
-            }
+            writer.module_entry_body(module, lines)?;
         }
-
-        for (cs_id, call) in built.calls() {
-            if !call.from.starts_with(&prefix) {
-                continue;
-            }
-            let owner_id = match CardId::parse(&call.from) {
-                Some(cid) => ids.get(cid.qualname()).copied(),
-                None => None,
-            };
-            // 目标可能在别的模块，pick 会先查本模块再查外部映射
-            let dst_id = call
-                .to
-                .as_deref()
-                .and_then(|to| pick(to, &prefix, &ids, &external));
-            repo::insert_call_site(&tx, self.project_id, cs_id, module, owner_id, dst_id, call)?;
-            for (param, expr) in &call.args {
-                repo::insert_call_arg(&tx, cs_id, param, expr)?;
-            }
-            for (ord, candidate) in call.candidates.iter().enumerate() {
-                let sym = pick(candidate, &prefix, &ids, &external);
-                repo::insert_call_candidate(&tx, cs_id, ord, candidate, sym)?;
-            }
-        }
+        writer.classes(built.classes(), |id| id.starts_with(&prefix))?;
+        writer.calls(built.calls(), |from| from.starts_with(&prefix))?;
 
         tx.commit()?;
         Ok(written)
