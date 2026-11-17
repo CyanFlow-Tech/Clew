@@ -12,6 +12,7 @@ use super::entry::{self, MODULE_ENTRY_QUALNAME};
 use super::graph_build::{self, SymbolMeta};
 use super::model::{Confidence, SymbolKind};
 use super::progress::weight;
+use crate::card::CardId;
 use crate::store::repo;
 
 #[derive(Debug, Default)]
@@ -39,8 +40,8 @@ pub struct ScanStats {
 
 /// Split a card id (`module:qualname`) into its two symbol key columns.
 fn card_parts(card_id: &str) -> (String, String) {
-    match card_id.split_once(':') {
-        Some((module, qualname)) => (module.to_string(), qualname.to_string()),
+    match CardId::parse(card_id) {
+        Some(id) => (id.module().to_string(), id.qualname().to_string()),
         None => (String::new(), card_id.to_string()),
     }
 }
@@ -180,7 +181,7 @@ pub fn scan_with(
     // call sites: every one of them, resolved or not
     let t_calls = Instant::now();
     for (cs_id, call) in &built.graph.calls {
-        let module = call.from.split_once(':').map(|(m, _)| m).unwrap_or("");
+        let module = CardId::module_of(&call.from).unwrap_or("");
         let owner_id = ids.get(&card_parts(&call.from)).copied();
         let dst_id = call
             .to

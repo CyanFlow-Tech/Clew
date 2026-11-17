@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::card::CardId;
 use crate::scan::graph_build::{ImportMeta, ModuleMeta, SymbolMeta};
 use crate::scan::model::{Call, Line};
 
@@ -244,7 +245,7 @@ pub fn insert_call_site(
     call: &Call,
 ) -> rusqlite::Result<()> {
     // the caller is stored as a bare qualname so it matches the symbol table
-    let owner = call.from.split_once(':').map(|(_, q)| q).unwrap_or(&call.from);
+    let owner = CardId::qualname_of(&call.from).unwrap_or(call.from.as_str());
     conn.execute(
         "INSERT INTO call_site
              (id, project_id, symbol_id, module, owner, target, kind, recv,
@@ -377,10 +378,10 @@ pub fn symbol_id_by_card(
     project_id: i64,
     card_id: &str,
 ) -> rusqlite::Result<Option<i64>> {
-    let Some((module, qualname)) = card_id.split_once(':') else {
+    let Some(cid) = CardId::parse(card_id) else {
         return Ok(None);
     };
-    find_symbol(conn, project_id, module, qualname)
+    find_symbol(conn, project_id, cid.module(), cid.qualname())
 }
 
 /// Call sites on one line of one function, with their argument bindings.

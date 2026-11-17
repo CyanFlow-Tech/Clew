@@ -1,3 +1,5 @@
+pub mod card;
+pub mod error;
 pub mod scan;
 pub mod search;
 pub mod settings;
@@ -10,9 +12,24 @@ pub mod walk;
 /// 那一块），界面上统一显示成 `__main__`。只换显示，库里存的还是 `<module>`，
 /// 匹配、查找都靠它。
 pub fn display_qual(qualname: &str) -> &str {
-    if qualname == "<module>" {
+    if qualname == card::MODULE_ENTRY_QUALNAME {
         "__main__"
     } else {
         qualname
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_module_entry_shows_as_main() {
+        assert_eq!(display_qual(card::MODULE_ENTRY_QUALNAME), "__main__");
+    }
+
+    #[test]
+    fn everything_else_keeps_its_qualname() {
+        assert_eq!(display_qual("Parser.parse"), "Parser.parse");
     }
 }

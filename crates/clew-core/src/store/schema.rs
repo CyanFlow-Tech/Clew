@@ -1,5 +1,18 @@
 //! DDL for the index database.
 
+/// 当前 schema 版本。存在 SQLite 的 `PRAGMA user_version` 里。
+///
+/// 改表结构时两件事一起做：`VERSION` 加一，`MIGRATIONS` 末尾追加一段
+/// “从上一版升到这一版”的 SQL。别直接改 `DDL` 里的列——`DDL` 只负责建全新库，
+/// 老用户的库不会因为 `CREATE TABLE IF NOT EXISTS` 而多出一列。
+pub const VERSION: i64 = 1;
+
+/// 逐级迁移脚本：下标 0 是 v1 → v2，下标 1 是 v2 → v3，以此类推。
+///
+/// 现在是 v1，所以是空的。下一版给 `symbol` 加一列时，这里会变成
+/// `&["ALTER TABLE symbol ADD COLUMN ..."]`，同时 `VERSION` 改成 2。
+pub const MIGRATIONS: &[&str] = &[];
+
 pub const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS project (
   id INTEGER PRIMARY KEY,

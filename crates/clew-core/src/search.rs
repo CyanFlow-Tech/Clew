@@ -7,6 +7,8 @@
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
+use crate::card::CardId;
+
 /// 搜索结果的种类。前三个是符号，可作根，后两个是路径。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -313,7 +315,7 @@ pub fn build_index(conn: &Connection, project_id: i64) -> rusqlite::Result<Index
             rows.push(Row {
                 kind,
                 module: idx,
-                card_id: format!("{module}:{qualname}"),
+                card_id: CardId::new(module, &qualname).into_string(),
                 name_l,
                 qual_l,
                 mask,

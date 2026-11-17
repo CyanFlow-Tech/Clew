@@ -19,6 +19,7 @@ use super::model::{
 };
 use super::progress::weight;
 use super::walker;
+use crate::card::CardId;
 
 /// Per-file facts that go into the `module` table.
 #[derive(Debug, Clone)]
@@ -1392,7 +1393,7 @@ impl Builder {
             call.recv = raw.recv.clone();
             call.ln = raw.line;
 
-            let module = call.from.split(':').next().unwrap_or("").to_string();
+            let module = CardId::module_of(&call.from).unwrap_or("").to_string();
             // Only the qualname is needed while resolving; cloning the whole card
             // (with its rendered lines) for every call site is wasted work.
             let card_qualname: Option<String> =
@@ -1635,13 +1636,8 @@ impl Builder {
         if let Some(c) = self.cards.get(id) {
             return c.kind == CardKind::Class;
         }
-        let bare = id
-            .split_once(':')
-            .map(|(_, q)| q)
-            .unwrap_or(id)
-            .rsplit('.')
-            .next()
-            .unwrap_or(id);
+        let qualname = CardId::qualname_of(id).unwrap_or(id);
+        let bare = qualname.rsplit('.').next().unwrap_or(qualname);
         self.global_by_class
             .as_ref()
             .and_then(|m| m.get(bare))
@@ -1658,7 +1654,7 @@ impl Builder {
     }
 
     fn resolve_class(&self, from_card: &str, raw: &str) -> Option<String> {
-        let module = from_card.split(':').next().unwrap_or("");
+        let module = CardId::module_of(from_card).unwrap_or("");
         let direct = Graph::card_id(module, raw);
         if self.is_class(&direct) {
             return Some(direct);
@@ -1702,8 +1698,8 @@ impl Builder {
         let Some(card) = self.cards.get(class_id) else {
             // 类卡还没物化：按全项目的 qualname 直接找这个方法，
             // 只接受唯一命中，继承链这时候查不到。
-            let qualname = class_id.split_once(':').map(|(_, q)| q)?;
-            let want = format!("{qualname}.{name}");
+            let cid = CardId::parse(class_id)?;
+            let want = format!("{}.{name}", cid.qualname());
             let ids = self.global_by_qualname.as_ref()?.get(&want)?;
             return if ids.len() == 1 {
                 Some(ids[0].clone())
@@ -2013,12 +2009,8 @@ fn import_label(imp: &ImportInfo) -> String {
 }
 
 fn short_name(card_id: &str) -> String {
-    card_id
-        .split(':')
-        .nth(1)
-        .unwrap_or(card_id)
-        .rsplit('.')
-        .next()
-        .unwrap_or(card_id)
-        .to_string()
+    let qualname = CardId::parse(card_id)
+        .map(|id| id.qualname().to_string())
+        .unwrap_or_else(|| card_id.to_string());
+    qualname.rsplit('.').next().unwrap_or(&qualname).to_string()
 }

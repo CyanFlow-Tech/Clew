@@ -8,9 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
-use crate::scan::model::{
-    Call, CallKind, Card, CardKind, Confidence, Line, LineKind, MethodRef, SymbolKind,
-};
+use crate::card::CardId;
+use crate::scan::model::{Call, Card, Line, MethodRef, SymbolKind};
 
 #[derive(Debug, Serialize)]
 pub struct Snapshot {
@@ -46,44 +45,8 @@ pub struct Entry {
     pub label: String,
 }
 
-fn line_kind(raw: &str) -> LineKind {
-    match raw {
-        "call" => LineKind::Call,
-        "branch" => LineKind::Branch,
-        _ => LineKind::Stmt,
-    }
-}
-
-fn call_kind(raw: &str) -> CallKind {
-    match raw {
-        "name" => CallKind::Name,
-        "self" => CallKind::SelfRef,
-        "selfattr" => CallKind::SelfAttr,
-        "attr" => CallKind::Attr,
-        _ => CallKind::Other,
-    }
-}
-
-fn confidence(raw: &str) -> Confidence {
-    match raw {
-        "exact" => Confidence::Exact,
-        "poly" => Confidence::Poly,
-        "heur" => Confidence::Heur,
-        "builtin" => Confidence::Builtin,
-        _ => Confidence::None,
-    }
-}
-
-fn card_kind(raw: &str) -> CardKind {
-    match raw {
-        "class" => CardKind::Class,
-        "method" => CardKind::Method,
-        _ => CardKind::Function,
-    }
-}
-
 fn card_id(module: &str, qualname: &str) -> String {
-    format!("{module}:{qualname}")
+    CardId::new(module, qualname).into_string()
 }
 
 /// Effective constructor along the MRO.
@@ -206,7 +169,7 @@ pub fn snapshot(conn: &Connection, project_id: i64) -> rusqlite::Result<Snapshot
         })? {
             let (sid, kind, text, indent, ln, call_id) = row?;
             lines_of.entry(sid).or_default().push(Line {
-                k: line_kind(&kind),
+                k: kind.parse().unwrap_or_default(),
                 text,
                 indent: indent.clamp(0, 255) as u8,
                 ln: u32::try_from(ln).unwrap_or(0),
@@ -297,7 +260,7 @@ pub fn snapshot(conn: &Connection, project_id: i64) -> rusqlite::Result<Snapshot
             qualname: qualname.clone(),
             title,
             params,
-            kind: card_kind(kind),
+            kind: kind.parse().unwrap_or_default(),
             lines: lines_of.remove(sid).unwrap_or_default(),
             methods: methods_of.remove(&id).unwrap_or_default(),
             bases: bases_of.remove(&id).unwrap_or_default(),
@@ -371,11 +334,11 @@ pub fn snapshot(conn: &Connection, project_id: i64) -> rusqlite::Result<Snapshot
             let call = Call {
                 from: card_id(&module, &owner),
                 target,
-                kind: call_kind(&kind),
+                kind: kind.parse().unwrap_or_default(),
                 recv,
                 args: args_of.remove(&id).unwrap_or_default(),
                 ln: u32::try_from(ln).unwrap_or(0),
-                conf: confidence(&conf),
+                conf: conf.parse().unwrap_or_default(),
                 to: dst.and_then(|d| card_of_symbol.get(&d).cloned()),
                 candidates: candidates_of.remove(&id).unwrap_or_default(),
                 imported,
@@ -434,7 +397,7 @@ fn card_lines(conn: &Connection, symbol_id: i64) -> rusqlite::Result<Vec<Line>> 
     for row in rows {
         let (kind, text, indent, ln, cs) = row?;
         out.push(Line {
-            k: line_kind(&kind),
+            k: kind.parse().unwrap_or_default(),
             text,
             indent: indent.clamp(0, 255) as u8,
             ln: u32::try_from(ln).unwrap_or(0),
@@ -558,7 +521,7 @@ fn one_card(
         qualname: qualname.to_string(),
         title,
         params,
-        kind: card_kind(kind),
+        kind: kind.parse().unwrap_or_default(),
         lines: card_lines(conn, symbol_id)?,
         methods: Vec::new(),
         bases: Vec::new(),
@@ -648,11 +611,11 @@ fn read_calls(
             Call {
                 from: from_id.to_string(),
                 target,
-                kind: call_kind(&kind),
+                kind: kind.parse().unwrap_or_default(),
                 recv,
                 args,
                 ln: u32::try_from(ln).unwrap_or(0),
-                conf: confidence(&conf),
+                conf: conf.parse().unwrap_or_default(),
                 to,
                 candidates,
                 imported,
@@ -683,9 +646,10 @@ pub fn cards_of(
         if !seen.insert(id.clone()) {
             continue;
         }
-        let Some((module, qualname)) = id.split_once(':') else {
+        let Some(cid) = CardId::parse(&id) else {
             continue;
         };
+        let (module, qualname) = (cid.module(), cid.qualname());
         let Some((symbol_id, kind)) = symbol_row(conn, project_id, module, qualname)? else {
             continue;
         };
@@ -723,9 +687,9 @@ pub fn cards_of(
         if cards.contains_key(&id) || refs.contains_key(&id) {
             continue;
         }
-        if let Some((module, qualname)) = id.split_once(':') {
-            let module = module.to_string();
-            let qualname = qualname.to_string();
+        if let Some(cid) = CardId::parse(&id) {
+            let module = cid.module().to_string();
+            let qualname = cid.qualname().to_string();
             if symbol_row(conn, project_id, &module, &qualname)?.is_some() {
                 refs.insert(id, CardRef { module, qualname });
             }

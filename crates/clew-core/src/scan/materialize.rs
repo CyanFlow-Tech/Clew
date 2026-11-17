@@ -17,6 +17,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::graph_build::{self, Builder};
 use super::model::SymbolKind;
 use super::walker;
+use crate::card::CardId;
 use crate::store::repo;
 
 /// 单个文件最多顺带解析这么多个依赖模块，防止一个函数拽进半个项目。
@@ -150,7 +151,7 @@ impl Materializer {
             })?;
             for row in rows {
                 let (module, qualname, kind) = row?;
-                let id = format!("{module}:{qualname}");
+                let id = CardId::new(&module, &qualname).into_string();
                 let bare = qualname
                     .rsplit('.')
                     .next()
@@ -304,11 +305,14 @@ impl Materializer {
                   WHERE project_id = ?1 AND module = ?2 AND qualname = ?3",
             )?;
             for card_id in need {
-                let Some((m, q)) = card_id.split_once(':') else {
+                let Some(cid) = CardId::parse(&card_id) else {
                     continue;
                 };
                 if let Some(id) = stmt
-                    .query_row(params![self.project_id, m, q], |r| r.get::<_, i64>(0))
+                    .query_row(
+                        params![self.project_id, cid.module(), cid.qualname()],
+                        |r| r.get::<_, i64>(0),
+                    )
                     .optional()?
                 {
                     external.insert(card_id, id);
@@ -374,11 +378,10 @@ impl Materializer {
             if !call.from.starts_with(&prefix) {
                 continue;
             }
-            let owner_id = call
-                .from
-                .split_once(':')
-                .and_then(|(_, q)| ids.get(q))
-                .copied();
+            let owner_id = match CardId::parse(&call.from) {
+                Some(cid) => ids.get(cid.qualname()).copied(),
+                None => None,
+            };
             // 目标可能在别的模块，pick 会先查本模块再查外部映射
             let dst_id = call
                 .to
@@ -401,7 +404,7 @@ impl Materializer {
 
 /// 模块名到卡片 id 的映射工具，物化入口用它从一张卡找到所属文件。
 pub fn module_of_card(card_id: &str) -> Option<&str> {
-    card_id.split_once(':').map(|(m, _)| m)
+    CardId::module_of(card_id)
 }
 
 #[allow(dead_code)]

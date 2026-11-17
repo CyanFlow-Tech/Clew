@@ -108,7 +108,7 @@ fn open_ready(path: &Path) -> Result<(Index, OpenResult), String> {
         .map_err(|e| e.to_string())?
         .into_iter()
         .map(|(_id, module, qualname, _confidence)| {
-            let card = format!("{module}:{qualname}");
+            let card = clew_core::card::CardId::new(&module, &qualname).into_string();
             Entry {
                 id: card.clone(),
                 label: card,
@@ -721,7 +721,7 @@ fn migrate_webview_dir(target: String) -> Result<String, String> {
         return Ok(to.display().to_string());
     }
 
-    clew_core::space::ensure_empty_target(&to)?;
+    clew_core::space::ensure_empty_target(&to).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&to).map_err(|e| format!("建不了缓存目录：{e}"))?;
     match clew_core::space::carry_cache(&from, &to) {
         Ok(moved) => eprintln!("[t] carry_cache moved {moved} entries"),
@@ -760,7 +760,7 @@ fn migrate_space(target: String, state: State<'_, AppState>) -> Result<SpaceRepo
 
     let from = clew_core::space::home();
     let to = PathBuf::from(&target);
-    clew_core::space::ensure_empty_target(&to)?;
+    clew_core::space::ensure_empty_target(&to).map_err(|e| e.to_string())?;
 
     // 复制前把 WAL 收进主库：迁移搬的是目录，别让 -wal 里还压着没落盘的数据
     {

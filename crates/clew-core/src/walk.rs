@@ -9,6 +9,8 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
+use crate::card::CardId;
+
 /// One call on the caller's line, with what it bound.
 #[derive(Debug, Clone, Serialize)]
 pub struct CallHit {
@@ -317,7 +319,7 @@ pub fn entry_symbols(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec
         let module: String = row.get(0)?;
         let qualname: String = row.get(1)?;
         Ok(SymbolRow {
-            card_id: format!("{module}:{qualname}"),
+            card_id: CardId::new(&module, &qualname).into_string(),
             module,
             qualname,
             kind: row.get(2)?,
@@ -369,7 +371,7 @@ fn symbols_of(
             Vec::new()
         };
         out.push(SymbolRow {
-            card_id: format!("{module}:{qualname}"),
+            card_id: CardId::new(module, &qualname).into_string(),
             module: module.to_string(),
             qualname,
             kind,
@@ -464,7 +466,7 @@ pub fn tree(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec<FileNode
                 files.len() - 1
             }
         };
-        sym.card_id = format!("{module}:{}", sym.qualname);
+        sym.card_id = CardId::new(&module, &sym.qualname).into_string();
         sym.module = module;
         files[idx].symbols.push(sym);
     }
@@ -637,7 +639,7 @@ pub fn search_symbols(
         let qualname: String = row.get(1)?;
         let path: String = row.get(5)?;
         Ok(SymbolHit {
-            card_id: format!("{module}:{qualname}"),
+            card_id: CardId::new(&module, &qualname).into_string(),
             module,
             path: path.trim_start_matches(r"\\?\").to_string(),
             qualname,
@@ -767,7 +769,7 @@ pub fn search(
     for row in rows {
         let (module, path, qualname, kind, def_line, is_entry, confidence, fanin) = row?;
         let symbol = SymbolRow {
-            card_id: format!("{module}:{qualname}"),
+            card_id: CardId::new(&module, &qualname).into_string(),
             module: module.clone(),
             qualname,
             kind,
@@ -884,8 +886,8 @@ pub fn entry_points(
 
 /// Resolve `[module:]qualname` to a symbol id.
 pub fn find(conn: &Connection, project_id: i64, needle: &str) -> rusqlite::Result<Vec<i64>> {
-    let (module, qualname) = match needle.split_once(':') {
-        Some((m, q)) => (Some(m), q),
+    let (module, qualname) = match CardId::parts(needle) {
+        Some((module, qualname)) => (Some(module), qualname),
         None => (None, needle),
     };
     let mut stmt = conn.prepare(

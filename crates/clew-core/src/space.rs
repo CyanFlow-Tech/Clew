@@ -8,6 +8,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::error::ClewError;
+
 /// 空间根的指针文件。放在程序根下，不放在空间里。
 const POINTER: &str = "clew.home.txt";
 
@@ -193,17 +195,24 @@ fn copy_tree(src: &Path, dst: &Path, report: &mut MigrateReport) -> anyhow::Resu
 }
 
 /// 目标必须是空目录（不存在也算空）。宁可让用户自己清，也不做覆盖。
-pub fn ensure_empty_target(target: &Path) -> Result<(), String> {
+pub fn ensure_empty_target(target: &Path) -> Result<(), ClewError> {
     match std::fs::read_dir(target) {
         Ok(mut entries) => {
             if entries.next().is_some() {
-                Err(format!("目标目录不是空的：{}", target.display()))
+                Err(ClewError::refused(format!(
+                    "目标目录不是空的：{}",
+                    target.display()
+                )))
             } else {
                 Ok(())
             }
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!("读不了目标目录 {}：{err}", target.display())),
+        Err(source) => Err(ClewError::Io {
+            doing: "读目标目录",
+            path: target.to_path_buf(),
+            source,
+        }),
     }
 }
 
@@ -215,7 +224,7 @@ pub fn migrate(from: &Path, to: &Path) -> anyhow::Result<MigrateReport> {
     if to.starts_with(from) {
         anyhow::bail!("目标目录在旧空间里面：{}", to.display());
     }
-    ensure_empty_target(to).map_err(|err| anyhow::anyhow!(err))?;
+    ensure_empty_target(to)?;
     std::fs::create_dir_all(to)?;
 
     let mut report = MigrateReport::default();
