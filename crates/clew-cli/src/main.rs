@@ -13,21 +13,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Scan a project and build the index
-    Scan {
-        /// Project root
-        project: PathBuf,
-        /// Index path; defaults to the project space, relative paths resolve
-        /// against the project root
-        #[arg(long)]
-        db: Option<PathBuf>,
-        /// Also index .venv / venv / env
-        #[arg(long)]
-        include_venv: bool,
-        /// Only index modules, symbols and imports, skipping card bodies
-        #[arg(long)]
-        symbols_only: bool,
-    },
     /// List the entry points discovered for a project
     Entries {
         /// Project root
@@ -226,49 +211,6 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Scan {
-            project,
-            db,
-            include_venv,
-            symbols_only,
-        } => {
-            let root = project.canonicalize()?;
-            let db_path = resolve(&root, db);
-            if let Some(dir) = db_path.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-
-            let mut conn = clew_core::store::open(&db_path)?;
-            let stats = clew_core::scan::run::scan_with(
-                &mut conn,
-                &root,
-                include_venv,
-                !symbols_only,
-                &mut |_, _, _, _| {},
-            )?;
-
-            println!("db         {}", display(&db_path));
-            println!("modules    {} (3rd {})", stats.modules, stats.third_party_modules);
-            println!(
-                "symbols    {} ({} classes, {} functions/methods)",
-                stats.symbols, stats.classes, stats.functions
-            );
-            println!(
-                "calls      {} (resolved {})",
-                stats.call_sites, stats.calls_resolved
-            );
-            println!("  args     {}", stats.call_args);
-            println!("  cands    {}", stats.call_candidates);
-            println!("imports    {}", stats.imports);
-            println!(
-                "entries    {} (main guard {}, pyproject {}, unresolved {})",
-                stats.entries_main_guard + stats.entries_pyproject,
-                stats.entries_main_guard,
-                stats.entries_pyproject,
-                stats.entries_unresolved
-            );
-            println!("elapsed    {} ms", stats.elapsed_ms);
-        }
         Command::Entries { project, db } => {
             let root = project.canonicalize()?;
             let (conn, project_id) = open_index(&root, db)?;

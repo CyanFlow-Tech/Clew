@@ -2,7 +2,8 @@
 
 use std::path::Path;
 
-use clew_core::scan::run::scan;
+use clew_core::scan::materialize::Materializer;
+use clew_core::scan::run::scan_with;
 use clew_core::store::{open, repo};
 
 const A_PY: &str = "\
@@ -57,12 +58,37 @@ fn setup(name: &str) -> std::path::PathBuf {
     dir.canonicalize().unwrap()
 }
 
+fn scan_complete(
+    db_path: &Path,
+    root: &Path,
+) -> (Materializer, i64, clew_core::scan::run::ScanStats) {
+    let mut conn = open(db_path).unwrap();
+    let stats = scan_with(&mut conn, root, false, &mut |_, _, _, _| {}).unwrap();
+    let pid = repo::project_id_by_path(&conn, &root.to_string_lossy())
+        .unwrap()
+        .unwrap();
+    let modules: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT module FROM module WHERE project_id = ?1 ORDER BY module")
+            .unwrap();
+        let rows = stmt.query_map([pid], |r| r.get::<_, String>(0)).unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    };
+    drop(conn);
+    let mut mat = Materializer::open(pid, open(db_path).unwrap()).unwrap();
+    mat.preload().unwrap();
+    for module in &modules {
+        mat.ensure(module).unwrap();
+    }
+    (mat, pid, stats)
+}
+
 #[test]
 fn scan_persists_symbols_and_calls() {
     let root = setup("rows");
     let db_path = root.join("index.db");
-    let mut conn = open(&db_path).unwrap();
-    let stats = scan(&mut conn, &root, false).unwrap();
+    let (mat, project_id, stats) = scan_complete(&db_path, &root);
+    let conn = mat.conn();
 
     assert_eq!(stats.modules, 2, "one row per source file");
     assert_eq!(stats.classes, 5);
@@ -71,10 +97,6 @@ fn scan_persists_symbols_and_calls() {
         "A, A.__init__, A.run, B, B.extra, D, D.__getattr__, E, E.test_x, Plain, Plain.go, helper"
     );
     assert_eq!(stats.entries_main_guard, 1);
-
-    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
-        .unwrap()
-        .expect("project row");
 
     let entries = repo::list_entries(&conn, project_id).unwrap();
     assert_eq!(entries.len(), 1);
@@ -192,10 +214,9 @@ fn rescan_replaces_rows_instead_of_duplicating() {
     let db_path = root.join("index.db");
     let mut conn = open(&db_path).unwrap();
 
-    let first = scan(&mut conn, &root, false).unwrap();
-    let second = scan(&mut conn, &root, false).unwrap();
+    let first = scan_with(&mut conn, &root, false, &mut |_, _, _, _| {}).unwrap();
+    let second = scan_with(&mut conn, &root, false, &mut |_, _, _, _| {}).unwrap();
     assert_eq!(first.symbols, second.symbols);
-    assert_eq!(first.call_sites, second.call_sites);
 
     let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
         .unwrap()
@@ -212,7 +233,7 @@ fn rescan_replaces_rows_instead_of_duplicating() {
 
     // a deleted line must not linger in the card after the second scan
     std::fs::write(root.join("b.py"), "from a import helper\n").unwrap();
-    let third = scan(&mut conn, &root, false).unwrap();
+    let third = scan_with(&mut conn, &root, false, &mut |_, _, _, _| {}).unwrap();
     assert_eq!(third.entries_main_guard, 0);
     let entries = repo::list_entries(&conn, project_id).unwrap();
     assert!(entries.is_empty(), "stale entry survived the rescan: {entries:?}");
@@ -250,8 +271,8 @@ fn nested_calls_keep_multibyte_text_intact() {
     let root = dir.canonicalize().unwrap();
 
     let db_path = root.join("index.db");
-    let mut conn = open(&db_path).unwrap();
-    let stats = scan(&mut conn, &root, false).unwrap();
+    let (mat, _, stats) = scan_complete(&db_path, &root);
+    let conn = mat.conn();
     assert_eq!(stats.entries_main_guard, 1);
 
     // innermost call first, each nested call lifted into a %N temporary
@@ -325,11 +346,8 @@ fn conditional_and_nested_definitions_are_indexed() {
     let root = dir.canonicalize().unwrap();
 
     let db_path = root.join("index.db");
-    let mut conn = open(&db_path).unwrap();
-    scan(&mut conn, &root, false).unwrap();
-    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
-        .unwrap()
-        .unwrap();
+    let (mat, project_id, _) = scan_complete(&db_path, &root);
+    let conn = mat.conn();
 
     let mut stmt = conn
         .prepare(
@@ -445,11 +463,8 @@ fn module_receiver_resolves_to_its_top_level_function() {
     let root = dir.canonicalize().unwrap();
 
     let db_path = root.join("index.db");
-    let mut conn = open(&db_path).unwrap();
-    scan(&mut conn, &root, false).unwrap();
-    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
-        .unwrap()
-        .unwrap();
+    let (mat, project_id, _) = scan_complete(&db_path, &root);
+    let conn = mat.conn();
 
     for module in ["app", "worker"] {
         let row: (String, String, Option<String>) = conn
@@ -518,11 +533,8 @@ fn package_relative_import_and_reexport_resolve() {
     let root = dir.canonicalize().unwrap();
 
     let db_path = root.join("index.db");
-    let mut conn = open(&db_path).unwrap();
-    scan(&mut conn, &root, false).unwrap();
-    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
-        .unwrap()
-        .unwrap();
+    let (mat, project_id, _) = scan_complete(&db_path, &root);
+    let conn = mat.conn();
 
     // 包内相对 import：`pkg/__init__.py` 里的 `.session` 是 pkg.session，
     // 不是少一层的 session
@@ -565,8 +577,6 @@ fn package_relative_import_and_reexport_resolve() {
 #[test]
 fn lazy_materialize_resolves_through_global_indexes() {
     use clew_core::scan::materialize::Materializer;
-    use clew_core::scan::run::scan_with;
-
     let dir = std::env::temp_dir().join(format!("clew-scan-lazypkg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("pkg")).unwrap();
@@ -603,7 +613,7 @@ fn lazy_materialize_resolves_through_global_indexes() {
 
     let db_path = root.join("index.db");
     let mut conn = open(&db_path).unwrap();
-    scan_with(&mut conn, &root, false, false, &mut |_, _, _, _| {}).unwrap();
+    scan_with(&mut conn, &root, false, &mut |_, _, _, _| {}).unwrap();
     let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
         .unwrap()
         .unwrap();
@@ -639,14 +649,12 @@ fn lazy_materialize_resolves_through_global_indexes() {
 /// The progress bar must never jump backwards, and must end at 100%.
 #[test]
 fn scan_reports_monotonic_progress() {
-    use clew_core::scan::run::scan_with;
-
     let root = setup("progress");
     let db_path = root.join("index.db");
     let mut conn = open(&db_path).unwrap();
 
     let mut seen: Vec<f32> = Vec::new();
-    scan_with(&mut conn, &root, false, true, &mut |_phase, _done, _total, f| {
+    scan_with(&mut conn, &root, false, &mut |_phase, _done, _total, f| {
         seen.push(f);
     })
     .unwrap();
@@ -673,14 +681,10 @@ fn materialize_matches_full_scan() {
     use clew_core::scan::run::scan_with;
     use clew_core::snapshot::{cards_of, snapshot};
 
-    // 基准：一次全量扫描
+    // 基准：一次完整扫描
     let full_root = setup("mat-full");
-    let mut full_conn = open(&full_root.join("index.db")).unwrap();
-    scan(&mut full_conn, &full_root, false).unwrap();
-    let full_pid = repo::project_id_by_path(&full_conn, &full_root.to_string_lossy())
-        .unwrap()
-        .unwrap();
-    let full = snapshot(&full_conn, full_pid).unwrap();
+    let (full_mat, full_pid, _) = scan_complete(&full_root.join("index.db"), &full_root);
+    let full = snapshot(full_mat.conn(), full_pid).unwrap();
     let a_cards: Vec<String> = full
         .cards
         .keys()
@@ -693,9 +697,8 @@ fn materialize_matches_full_scan() {
     let root = setup("mat-lazy");
     let db = root.join("index.db");
     let mut conn = open(&db).unwrap();
-    let stats = scan_with(&mut conn, &root, false, false, &mut |_, _, _, _| {}).unwrap();
+    let stats = scan_with(&mut conn, &root, false, &mut |_, _, _, _| {}).unwrap();
     assert_eq!(stats.symbols, 12, "目录层应当照常建立符号");
-    assert_eq!(stats.call_sites, 0, "目录层不应记录调用点");
     let pid = repo::project_id_by_path(&conn, &root.to_string_lossy())
         .unwrap()
         .unwrap();
@@ -760,11 +763,8 @@ fn cards_of_matches_the_whole_snapshot() {
 
     let root = setup("cards");
     let db_path = root.join("index.db");
-    let mut conn = open(&db_path).unwrap();
-    scan(&mut conn, &root, false).unwrap();
-    let project_id = repo::project_id_by_path(&conn, &root.to_string_lossy())
-        .unwrap()
-        .unwrap();
+    let (mat, project_id, _) = scan_complete(&db_path, &root);
+    let conn = mat.conn();
 
     let snap = snapshot(&conn, project_id).unwrap();
     let ids: Vec<String> = snap.cards.keys().cloned().collect();

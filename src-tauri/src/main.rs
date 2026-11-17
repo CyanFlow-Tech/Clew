@@ -178,8 +178,6 @@ fn spawn_scan(root: PathBuf) -> Arc<ScanJob> {
                 &mut conn,
                 &root,
                 false,
-                // 先只建目录，卡片等点开再算
-                false,
                 &mut |phase, done, total, fraction| {
                     if let Ok(mut p) = progress.lock() {
                         *p = Progress {

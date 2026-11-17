@@ -160,14 +160,9 @@ pub struct Builder {
     out_classes: Vec<ClassMeta>,
 }
 
-pub fn build(root: &Path) -> anyhow::Result<Built> {
-    build_with(root, false, true, &mut |_, _, _, _| {})
-}
-
 pub fn build_with(
     root: &Path,
     include_venv: bool,
-    emit_cards: bool,
     report: &mut dyn FnMut(&'static str, u64, u64, f32),
 ) -> anyhow::Result<Built> {
     let t_all = Instant::now();
@@ -191,7 +186,7 @@ pub fn build_with(
     let bytes = AtomicU64::new(0);
 
     let mut builder = Builder::default();
-    builder.symbols_only = !emit_cards;
+    builder.symbols_only = true;
 
     const CHUNK: usize = 500;
     let mut done = 0usize;
@@ -200,7 +195,7 @@ pub fn build_with(
             .par_iter()
             .map_init(new_parser, |parser, file| {
                 let mut part = Builder::default();
-                part.symbols_only = !emit_cards;
+                part.symbols_only = true;
 
                 let t = Instant::now();
                 let Ok(source) = std::fs::read_to_string(&file.path) else {
@@ -338,6 +333,10 @@ impl Builder {
     /// pseudo symbol rather than to a card of their own.
     pub(crate) fn module_cards(&self) -> &BTreeMap<String, Vec<Line>> {
         &self.module_cards
+    }
+
+    pub(crate) fn classes(&self) -> &[ClassMeta] {
+        &self.out_classes
     }
 
     /// Modules this file imports from, used to decide what to parse alongside it.

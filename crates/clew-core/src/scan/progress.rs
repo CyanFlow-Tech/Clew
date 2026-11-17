@@ -1,8 +1,5 @@
 //! Coarse progress for a running scan.
 //!
-//! The weights below come from a measured run on a 2.2M-line project: parsing
-//! and emitting cards 36%, resolving edges 3%, writing tables 43%, commit 17%.
-//! They are only used to turn "3 of 8 phases" into a fraction the UI can draw.
 
 #[derive(Debug, Clone, Copy)]
 pub struct Progress {
@@ -30,13 +27,11 @@ impl Default for Progress {
 /// Where each phase starts and ends on the 0..1 axis.
 pub mod weight {
     pub const WALK: (f32, f32) = (0.0, 0.01);
-    pub const PARSE: (f32, f32) = (0.01, 0.37);
-    pub const RESOLVE: (f32, f32) = (0.37, 0.40);
-    pub const SYMBOLS: (f32, f32) = (0.40, 0.46);
-    pub const CARDS: (f32, f32) = (0.46, 0.56);
-    pub const CALLS: (f32, f32) = (0.56, 0.82);
-    pub const MISC: (f32, f32) = (0.82, 0.83);
-    pub const COMMIT: (f32, f32) = (0.83, 1.0);
+    pub const PARSE: (f32, f32) = (0.01, 0.85);
+    pub const RESOLVE: (f32, f32) = (0.85, 0.86);
+    pub const SYMBOLS: (f32, f32) = (0.86, 0.92);
+    pub const MISC: (f32, f32) = (0.92, 0.95);
+    pub const COMMIT: (f32, f32) = (0.95, 1.0);
 
     /// Map `done / total` inside a phase onto the global 0..1 axis.
     pub fn lerp(span: (f32, f32), done: u64, total: u64) -> f32 {
