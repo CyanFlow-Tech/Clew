@@ -7,21 +7,61 @@ at a time, and keep the trail of what you have read.
 
 ---
 
+## The problem
+
+Reading an unfamiliar Python codebase, the hard part is not "find the definition". It is:
+
+- **Not knowing where to start.** Tens of thousands of symbols, and you do not know what
+  to search for.
+- **Navigation is linear.** An editor's back stack only rewinds; it cannot hold three open
+  threads or tell you where you left off.
+- **The whole graph is unreadable.** A complete call graph is too large, so editors show
+  you one file and nothing else.
+
+Clew makes the program's entry points the root of the map, lets you descend one call at a
+time, and remembers the path you took.
+
+## How it works
+
+- A **card** is one function, method or class. It shows the code, line numbers, and one
+  anchor per call site.
+- An **anchor** carries the argument binding of that call (`param ← expression`), so you
+  never have to match parameters to arguments by hand.
+- **Classes are nodes too**, with their constructor and the methods you have actually
+  entered.
+- Every call is resolved as precisely as the syntax allows: same module, imports (including
+  aliases and relative imports), `self.`/`cls.` methods, local variable types, and every
+  candidate implementation when dispatch is dynamic.
+- Imports are not drawn as edges. They show up as a styled name with its import path, so
+  the graph stays a call graph instead of a dependency hairball.
+
+## How it differs
+
+|  | Graph viewers / LLM knowledge graphs | Compiler-based indexes | **Clew** |
+|---|---|---|---|
+| Where the graph comes from | LLM extraction or mixed AST | Compiler front end | **tree-sitter, deterministic** |
+| Built for | AI assistants | Machines | **Humans** |
+| Starting point | Search box | None | **Program entry points** |
+| Remembers where you were | No | No | **Yes, persisted across sessions** |
+| Handling of scale | Spatial clustering | — | **Temporal: expand only what you walk into** |
+
+---
+
 ## Using Clew
 
 ### Open a project
 
-The desktop window reads a SQLite index at `<project>/.clew/index.db`. The first open
-builds it in the background and shows progress in the status bar; later opens read it
-directly.
-
 ```bash
-# release build (see "Building a release" for how to make one)
+# release build (see "Building a release")
 target\release\clew-app.exe E:\path\to\project
 
 # development build, which also hot-reloads the frontend (see "Day to day")
 .\tools\dev.ps1 -Project E:\path\to\project
 ```
+
+Indexes live under the app's own data home, not inside the project:
+`<app>/.clew-home/projects/<hash>/index.db`. The first open builds the index in the
+background and shows progress in the status bar; later opens read it directly.
 
 Opening the window with `cargo run -p clew-app` alone is not enough in development: that
 build loads the frontend from `http://127.0.0.1:1755`, so `tools/dev.ps1` has to be
@@ -29,8 +69,12 @@ running. A blank window means that server is not up.
 
 ### The window
 
+![Cards, call edges, the breadcrumb and the symbol tree](docs/images/canvas.png)
+
 - **Activity rail, far left.** Two tabs: the symbol tree (folder icon) and search
-  (magnifier). Clicking the current tab again collapses the panel.
+  (magnifier). Clicking the current tab again collapses the panel. The gear at the bottom
+  opens settings (where Clew keeps its data).
+
 - **Sidebar.** A symbol tree of the whole project: folder, then file, then the
   definitions inside it. The dropdown at the top of the panel switches what it lists:
 
@@ -45,12 +89,22 @@ running. A blank window means that server is not up.
   and the width is remembered.
 
 - **Canvas.** Every card is one function, method or class: its code, line numbers, and one
-  anchor per call site. Clicking an anchor opens the callee as a new card next to it. The
-  breadcrumb in the title bar is the path you descended; the minimap in the corner can be
-  clicked or dragged to move around.
+  anchor per call site. Clicking an anchor opens the callee as a new card next to it and
+  draws the edge. The breadcrumb in the title bar is the path you descended; cards close
+  with the **×** on their header once nothing points at them any more.
+
+- **Hover an anchor** to see what that call bound: the arguments as `param ← expression`,
+  how the callee was resolved, and its source when it comes from an import.
+
+- **Double-click a card** for the focus view: the same card, centered and larger.
+  **Esc** closes it.
+
+- **Minimap**, bottom right of the canvas: click or drag inside it to move the viewport.
+  The canvas itself pans by dragging an empty area.
 
 - **★ marks an entry.** In the sidebar rows and on card headers. Marked cards show up
   under 收藏夹.
+
 
 - **Search tab.** Two filters side by side: path and function name. Both are plain
   substring matches, one page of 50 at a time, "load more" at the bottom, and only the
@@ -59,9 +113,10 @@ running. A blank window means that server is not up.
   - a dotted or slashed path (`pkg.mod`, `/tests/agent`) walks the levels from the root,
     each level matched as a substring.
 
-  **Ctrl+R** reloads the window.
+![Searching the symbol tree by path](docs/images/search.png)
 
----
+The cards you have open, their expand state and the scroll position are saved per project
+and come back when you reopen it. **Ctrl+R** reloads the window.
 
 ## Developing Clew
 
@@ -70,10 +125,11 @@ running. A blank window means that server is not up.
 | Path | What lives here |
 |---|---|
 | `crates/clew-core` | parsing (tree-sitter), call resolution, index storage, search |
-| `crates/clew-cli` | the `clew` command line; every capability is verifiable here first |
-| `src-tauri` | window-side commands (`src-tauri/src/main.rs`) and the Tauri config |
+| `crates/clew-cli` | the `clew` command line, kept for poking at an index from a terminal |
+| `src-tauri` | window-side commands (`src-tauri/src/gui/*.rs`) and the Tauri config |
 | `src/` | frontend: `shell/` is the shell and panels, `app/` is the canvas, `shared/` the bits both use, `css/` the styles; native ES modules, no bundler, no npm |
-| `tools/` | dev server, CDP harnesses (both drive a Tauri stub, no preview mode) |
+| `tools/` | dev server and the two CDP harnesses (both drive a Tauri stub) |
+| `docs/images/` | the screenshots used above |
 | `prototype/` | standalone HTML mockups for UI experiments |
 | `bench/` | the performance baseline script |
 
@@ -94,7 +150,8 @@ baked into the binary.
   much faster than release.
 - `dev.ps1` also opens the WebView2 debugging port (9222 by default, `-Cdp 0` turns it
   off), so `node tools/cdp.js "<js expression>"` can inspect the live window: DOM,
-  computed styles, the current state of the panes.
+  computed styles, the current state of the panes. `node tools/shot.js out.png` captures
+  it.
 
 ### Building a release
 
@@ -107,103 +164,31 @@ defined in `.cargo/config.toml`. The `custom-protocol` feature is what makes Tau
 `src/` into the binary; without it the release build would try to load the dev server and
 show a blank window, so `src-tauri/src/main.rs` refuses to compile in that state.
 
-### Verifying without clicking around
-
-```bash
-# the index itself
-cargo run -p clew-cli -- scan E:\path\to\project
-cargo run -p clew-cli -- entries E:\path\to\project
-cargo run -p clew-cli -- stats E:\path\to\project
-cargo run -p clew-cli -- files E:\path\to\project
-cargo run -p clew-cli -- tree E:\path\to\project --rows 40
-cargo run -p clew-cli -- search E:\path\to\project 'curator:main'
-
-# sidebar in a headless Edge over CDP
-.\tools\side-check.ps1
-```
-
-It serves the real index data through a Tauri stub and asserts row counts, expansion
-state and the panel geometry. The output is one JSON blob, so a change is a number, not
-an impression.
-
 ### Working agreements
 
-Read [AGENTS.md](AGENTS.md) before touching code: it covers asking before writing, real-data
-acceptance, the rendering-before-scale rule, commit message format, and the rule that agents
-verify the UI through the browser and CDP instead of launching the window themselves.
-
----
-
-## The problem
-
-Reading an unfamiliar Python codebase, the hard part is not "find the definition". It is:
-
-- **Not knowing where to start.** Tens of thousands of symbols, and you do not know what
-  to search for.
-- **Navigation is linear.** An editor's back stack only rewinds; it cannot hold three open
-  threads or tell you where you left off.
-- **The whole graph is unreadable.** A complete call graph is too large, so editors show
-  you one file and nothing else.
-
-Clew makes the program's entry points the root of the map, lets you descend one call at a
-time, and remembers the path you took.
-
----
-
-## How it works
-
-- A **card** is one function, method or class. It shows the code, line numbers, and one
-  anchor per call site.
-- An **anchor** carries the argument binding of that call (`param ← expression`), so you
-  never have to match parameters to arguments by hand.
-- **Classes are nodes too**, with their constructor and the methods you have actually
-  entered.
-- Every call is resolved as precisely as the syntax allows: same module, imports (including
-  aliases and relative imports), `self.`/`cls.` methods, local variable types, and every
-  candidate implementation when dispatch is dynamic.
-- Imports are not drawn as edges. They show up as a styled name with its import path, so
-  the graph stays a call graph instead of a dependency hairball.
-
----
-
-## How it differs
-
-|  | Graph viewers / LLM knowledge graphs | Compiler-based indexes | **Clew** |
-|---|---|---|---|
-| Where the graph comes from | LLM extraction or mixed AST | Compiler front end | **tree-sitter + ty, deterministic** |
-| Built for | AI assistants | Machines | **Humans** |
-| Starting point | Search box | None | **Program entry points** |
-| Remembers where you were | No | No | **Yes, persisted across sessions** |
-| Handling of scale | Spatial clustering | — | **Temporal: expand only what you walk into** |
-| Notes | No | No | **Yes, and they survive renames** |
+Read [AGENTS.md](AGENTS.md) before touching code: it covers asking before writing,
+real-data acceptance, the rendering-before-scale rule and commit message format. The UI is
+verified with `tools\side-check.ps1` and `tools\settings-check.ps1` — a Tauri stub and a
+headless browser over CDP, not by launching the window.
 
 ---
 
 ## Status
 
 Early development. The indexing pipeline, call resolution, persistence, the interactive
-walk, the CLI and the desktop GUI all work.
+walk and the desktop GUI all work.
 
-The GUI is the interaction model this project is built around: cards you open in place,
-a `◆` on every call that shows what it bound, class cards that grow only the methods you
+The GUI is the interaction model this project is built around: cards you open in place, an
+anchor on every call that shows what it bound, class cards that grow only the methods you
 have actually entered, and the whole graph re-laid out as you go.
 
-Not yet implemented: notes attached to cards (the table and the command exist, the UI does
-not), visited/unvisited shading, type-aware resolution for `obj.method()` chains (planned
-via `ty`), path export, and collapsing of single in/out chains in `walk`.
+Not yet implemented: notes attached to cards (the table and the commands exist, the UI does
+not), visited/unvisited shading, type-aware resolution for `obj.method()` chains, path
+export, canvas zoom, and collapsing of single in/out chains in `walk`.
 
 ---
-
-## Documentation
-
-The design documents (architecture, engineering spec, onboarding notes, release
-strategy) are kept outside the repository and written in Chinese for the
-maintainer's own use. [bench/measure.py](bench/measure.py) reproduces the
-performance baseline those documents quote.
 
 ## License
 
 [MIT](LICENSE).
-
-
 
