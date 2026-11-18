@@ -2,7 +2,7 @@
 // 建索引这条后台流程：状态栏进度、估算时间、建完自动进界面。
 import { api } from "./boot.js";
 import { setNote } from "./welcome.js";
-import { setStatus } from "./titlebar.js";
+import { setStatus, status } from "./titlebar.js";
 import { setSideOpen } from "./sidetoggle.js";
 
 export let scanTimer = null;

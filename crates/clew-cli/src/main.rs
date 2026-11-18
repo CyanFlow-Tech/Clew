@@ -183,13 +183,14 @@ pub(crate) fn display(path: &Path) -> String {
     path.display().to_string().trim_start_matches(r"\\?\").to_string()
 }
 
-/// Open the index of an already-scanned project.
+/// Open the index of an already-scanned project. Indexes are built by the app,
+/// so a miss here means the project has never been opened in the window.
 pub(crate) fn open_index(root: &Path, db: Option<PathBuf>) -> anyhow::Result<(clew_core::store::Conn, i64)> {
     let db_path = resolve(root, db);
     match clew_core::store::open_index(&db_path, root)? {
         Some(pair) => Ok(pair),
         None => anyhow::bail!(
-            "project not indexed yet, run scan first: {} (db {})",
+            "project not indexed yet, open it in Clew once: {} (db {})",
             display(root),
             display(&db_path)
         ),
@@ -220,3 +221,4 @@ fn main() -> anyhow::Result<()> {
 pub(crate) fn ms(d: std::time::Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
+
