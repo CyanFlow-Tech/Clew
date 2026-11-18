@@ -1,4 +1,5 @@
 // shell/viewmenu.js
+import { h } from "../shared/dom.js";
 import { store } from "./store.js";
 import { api } from "./boot.js";
 import { SP_VIEWS, SP_VIEW_KEY } from "./sidebar.js";
@@ -29,8 +30,7 @@ export function closeSpMenu() {
 export function openSpMenu() {
   spMenu.innerHTML = "";
   SP_VIEWS.forEach(function (v) {
-    const b = document.createElement("button");
-    b.textContent = v.label;
+    const b = h("button", { text: v.label });
     b.onclick = function () {
       closeSpMenu();
       setView(v.id);

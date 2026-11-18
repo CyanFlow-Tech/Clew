@@ -1,7 +1,8 @@
 // app/edge.js
+import { h } from "../shared/dom.js";
 import { esc, showQual } from "../shared/format.js";
 import { bubble, svg, world } from "./dom.js";
-import { store } from "./store.js";
+import { placedEl, store } from "./store.js";
 import { classOf, isMethod } from "./card.js";
 import { expand } from "./place.js";
 
@@ -18,21 +19,21 @@ export function anchorOfCs(csId) {
   return null;
 }
 export function targetAnchor(cid) {
-  if (store.cardEls[cid]) return leftPort(cid);
+  if (placedEl(cid)) return leftPort(cid);
   if (isMethod(cid)) {
     const cls = classOf(cid);
-    if (store.cardEls[cls]) return leftPort(cls);
+    if (placedEl(cls)) return leftPort(cls);
   }
   return null;
 }
 
 export function leftPort(id) {
-  const el = store.cardEls[id];
+  const el = placedEl(id);
   const r = el.getBoundingClientRect(), w = world.getBoundingClientRect();
   return { x: r.left - w.left, y: r.top - w.top + 15 };
 }
 export function rightPort(id) {
-  const el = store.cardEls[id];
+  const el = placedEl(id);
   const r = el.getBoundingClientRect(), w = world.getBoundingClientRect();
   return { x: r.right - w.left, y: r.top - w.top + 15 };
 }
@@ -51,7 +52,7 @@ export function draw() {
   Object.keys(store.CALLS).forEach(function (k) {
     const c = store.CALLS[k];
     if (!store.activated.has(k)) return;
-    if (!c.to || !store.cardEls[c.from]) return;
+    if (!c.to || !placedEl(c.from)) return;
     const b0 = targetAnchor(c.to);
     if (!b0) return;
     const a = anchorOfCs(k);
@@ -88,8 +89,8 @@ export function argRows(cs) {
   if (!params.length) return '<div class="row"><span class="k">(无参数)</span><span class="v"></span></div>';
   return params.map(function (p) {
     const v = (c.args || {})[p];
-    return '<div class="row"><span class="k">' + esc(p) + '</span><span class="v">' +
-      (v === undefined ? "<span style='color:#6b7280'>未知</span>" : esc(v)) + "</span></div>";
+    const value = v === undefined ? '<span style="color:#6b7280">未知</span>' : esc(v);
+    return `<div class="row"><span class="k">${esc(p)}</span><span class="v">${value}</span></div>`;
   }).join("");
 }
 export function confNote(c) {
@@ -105,9 +106,7 @@ export function showBubble(cs, ev) {
   hoverCs = cs;
   const c = store.CALLS[cs];
   bubble.innerHTML = "";
-  const hdr = document.createElement("div");
-  hdr.className = "hdr";
-  hdr.textContent = c.from + " → " + (c.to || c.target || "?") + (c.from === c.to ? " · 递归" : "");
+  const hdr = h("div", { class: "hdr", text: c.from + " → " + (c.to || c.target || "?") + (c.from === c.to ? " · 递归" : "") });
   bubble.appendChild(hdr);
   const args = document.createElement("div");
   args.innerHTML = argRows(cs);
@@ -128,8 +127,7 @@ export function showBubble(cs, ev) {
     });
     bubble.appendChild(list);
   }
-  const note = document.createElement("div");
-  note.className = "note";
+  const note = h("div", { class: "note" });
   note.textContent = (c.typed ? "类型推断：" + c.typed + " · " : "") +
     (c.imported ? "来源：" + c.imported + " · " : "") + confNote(c);
   bubble.appendChild(note);
@@ -138,3 +136,6 @@ export function showBubble(cs, ev) {
   bubble.style.top = Math.min(ev.clientY + 14, window.innerHeight - 40 - bubble.offsetHeight) + "px";
 }
 export function hideBubble() { hoverCs = null; bubble.style.display = "none"; }
+
+
+

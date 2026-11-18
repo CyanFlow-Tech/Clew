@@ -11,13 +11,15 @@ import { chooseFolder, closeProject, openPath, rebuildIndex, removeIndex } from 
 export const help = document.createElement("div");
 help.id = "tb-help";
 help.hidden = true;
-help.innerHTML =
-  '<div class="card"><span class="close">' + ICON.close + '</span>' +
-  "<h3>Clew " + VERSION + "</h3>" +
-  "<p>从入口开始读调用图。点行尾的 <span class=\"hi\">" + icon("enter") +
-  "</span> 标记进入实现，类卡片按需长出方法目录。</p>" +
-  "<p>空白处按住拖动画布，右下角 minimap 点哪儿跳哪儿。</p>" +
-  "<p>第二行下拉换入口；文件菜单里可以打开或关闭项目。</p></div>";
+help.innerHTML = `
+  <div class="card">
+    <span class="close">${ICON.close}</span>
+    <h3>Clew ${VERSION}</h3>
+    <p>从入口开始读调用图。点行尾的 <span class="hi">${icon("enter")}</span>
+      标记进入实现，类卡片按需长出方法目录。</p>
+    <p>空白处按住拖动画布，右下角 minimap 点哪儿跳哪儿。</p>
+    <p>第二行下拉换入口；文件菜单里可以打开或关闭项目。</p>
+  </div>`;
 document.body.appendChild(help);
 help.querySelector(".close").onclick = function () {
   help.hidden = true;

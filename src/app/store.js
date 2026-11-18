@@ -11,12 +11,10 @@ export const store = {
   FANIN: {},
   REFS: {},          // 未加载的卡也知道 module / qualname，候选列表才显示得出名字
 
-  // 卡片
-  cardEls: {},       // 已放置的卡片 DOM
-  state: {},         // summary | full | mini
-  openMethods: {},   // 类卡片里展开的方法
-  parentOf: {},      // 放置时的父卡片
-  methodSet: {},     // 类卡片 -> 已出现的成员方法（按需生成）
+  // 卡片：id -> { el, state, parent, members }
+  // 一张卡的四件事放在一条记录里，省得四个平行字典各错各的
+  cards: {},
+
   activated: new Set(),   // 被用户实际跟进过的调用点（cs id）
   selectedCs: null,       // 当前显示绑定注释的那一跳
   selectedRow: null,      // 当前选中的方法（用于类目录高亮）
@@ -28,3 +26,30 @@ export const store = {
   activeRoot: null,
   trail: [],              // 顶部路径条
 };
+
+// ─── 卡片记录 ───────────────────────────────────────────────────
+// el      放置后的 DOM；没放置过是 null
+// state   summary | full | mini
+// parent  放置时的父卡片 id
+// members 类卡片 -> 已出现在目录里的方法（Set，按需生成）
+
+export function card(id) {
+  return store.cards[id] || null;
+}
+
+/// 取记录，没有就建一条：方法卡在还没放置时常需要先记住目录状态
+export function cardRec(id) {
+  return store.cards[id] ||
+    (store.cards[id] = { el: null, state: "summary", parent: null, members: null });
+}
+
+/// 已放置的卡片元素；没放置返回 null
+export function placedEl(id) {
+  const c = store.cards[id];
+  return c && c.el ? c.el : null;
+}
+
+export function placedIds(tab) {
+  const cards = (tab || store).cards || {};
+  return Object.keys(cards).filter(function (id) { return !!cards[id].el; });
+}

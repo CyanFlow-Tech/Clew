@@ -1,6 +1,7 @@
 // app/canvas.js
+import { h } from "../shared/dom.js";
 import { graph } from "./dom.js";
-import { store } from "./store.js";
+import { placedEl, placedIds } from "./store.js";
 import { onRelayout } from "./layout.js";
 
 // ─── 画布拖拽 ───────────────────────────────────────────────────
@@ -52,9 +53,7 @@ import { onRelayout } from "./layout.js";
 (function minimap() {
   const W = 200;
   const H = 150;
-  const box = document.createElement("div");
-  box.id = "minimap";
-  box.title = "点或拖这里移动画布";
+  const box = h("div", { id: "minimap", title: "点或拖这里移动画布" });
   const canvas = document.createElement("canvas");
   box.appendChild(canvas);
   document.body.appendChild(box);
@@ -79,8 +78,8 @@ import { onRelayout } from "./layout.js";
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    Object.keys(store.cardEls).forEach(function (id) {
-      const el = store.cardEls[id];
+    placedIds().forEach(function (id) {
+      const el = placedEl(id);
       if (!el) return;
       const x = parseFloat(el.style.left) || 0;
       const y = parseFloat(el.style.top) || 0;
@@ -117,15 +116,15 @@ import { onRelayout } from "./layout.js";
     ctx.fillStyle = "#2b3440";
     ctx.strokeStyle = "#414d5d";
     ctx.lineWidth = 1;
-    Object.keys(store.cardEls).forEach(function (id) {
-      const el = store.cardEls[id];
+    placedIds().forEach(function (id) {
+      const el = placedEl(id);
       if (!el) return;
       const x = parseFloat(el.style.left) || 0;
       const y = parseFloat(el.style.top) || 0;
-      const w = Math.max(2, (el.offsetWidth || 0) * scale);
-      const h = Math.max(2, (el.offsetHeight || 0) * scale);
-      ctx.fillRect(X(x), Y(y), w, h);
-      ctx.strokeRect(X(x), Y(y), w, h);
+      const boxW = Math.max(2, (el.offsetWidth || 0) * scale);
+      const boxH = Math.max(2, (el.offsetHeight || 0) * scale);
+      ctx.fillRect(X(x), Y(y), boxW, boxH);
+      ctx.strokeRect(X(x), Y(y), boxW, boxH);
     });
 
     // 视口可能比内容还大，裁到 minimap 范围内，否则会画出框外
@@ -185,4 +184,9 @@ import { onRelayout } from "./layout.js";
 
   schedule();
 })();
+
+
+
+
+
 

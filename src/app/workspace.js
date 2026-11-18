@@ -1,7 +1,7 @@
 // app/workspace.js
 import { ensure } from "./data.js";
-import { graph, svg, world } from "./dom.js";
-import { store } from "./store.js";
+import { graph } from "./dom.js";
+import { card, placedEl, placedIds, store } from "./store.js";
 import { renderCard } from "./card.js";
 import { placeCard } from "./place.js";
 import { blankTab } from "./select.js";
@@ -22,16 +22,19 @@ export function snapshotWorkspace() {
   const list = [];
   store.tabs.forEach(function (t, rootId) {
     if (!t || !rootId) return;
-    const methodSets = {};
-    Object.keys(t.methodSet || {}).forEach(function (k) {
-      methodSets[k] = Array.from(t.methodSet[k] || []);
+    // 卡片状态照存，DOM 不存：快照只记「哪些卡、展开到什么程度、父卡是谁」
+    const cards = {};
+    Object.keys(t.cards || {}).forEach(function (id) {
+      const c = t.cards[id];
+      cards[id] = {
+        state: c.state,
+        parent: c.parent,
+        members: c.members ? Array.from(c.members) : null,
+      };
     });
     list.push({
       root: rootId,
-      state: t.state || {},
-      openMethods: t.openMethods || {},
-      parentOf: t.parentOf || {},
-      methodSet: methodSets,
+      cards: cards,
       roots: Array.from(t.roots || []),
       activated: Array.from(t.activated || []),
       selectedId: t.selectedId || null,
@@ -72,6 +75,19 @@ export function readWorkspace() {
   }
 }
 
+/// 合并之前写下的快照把状态摊在三张平行表里，这里折回一条记录
+function cardsFromOldShape(s) {
+  const out = {};
+  Object.keys(s.state || {}).forEach(function (id) {
+    out[id] = { state: s.state[id], parent: (s.parentOf || {})[id] || null };
+  });
+  Object.keys(s.methodSet || {}).forEach(function (id) {
+    if (!out[id]) out[id] = { state: "summary", parent: null };
+    out[id].members = s.methodSet[id];
+  });
+  return out;
+}
+
 /// 只保留索引里还存在的 id：项目改过之后旧快照可能指向不存在的卡
 export function keepAlive(obj, alive) {
   const out = {};
@@ -103,13 +119,16 @@ export async function restoreWorkspace(snap) {
   snap.tabs.forEach(function (s) {
     if (!alive[s.root]) return;
     const t = blankTab(s.root);
-    t.state = keepAlive(s.state, alive);
-    t.openMethods = keepAlive(s.openMethods, alive);
-    t.parentOf = keepAlive(s.parentOf, alive);
-    t.methodSet = {};
-    Object.keys(s.methodSet || {}).forEach(function (k) {
-      if (!alive[k]) return;
-      t.methodSet[k] = new Set(s.methodSet[k] || []);
+    const saved = keepAlive(s.cards || cardsFromOldShape(s), alive);
+    t.cards = {};
+    Object.keys(saved).forEach(function (id) {
+      const c = saved[id] || {};
+      t.cards[id] = {
+        el: null,
+        state: c.state || "summary",
+        parent: c.parent || null,
+        members: c.members ? new Set(c.members) : null,
+      };
     });
     t.roots = new Set((s.roots || []).filter(function (id) { return alive[id]; }));
     // activated 里是 call site 的 id，不是卡片 id：用卡片表过滤会把线全丢掉
@@ -133,32 +152,24 @@ export function hydrateTab() {
   const t = store.tabs.get(store.activeRoot);
   if (!t || !t.needsHydrate) return;
   t.needsHydrate = false;
-  Object.keys(store.state).forEach(function (id) {
-    if (store.NODES[id]) placeCard(id, store.parentOf[id]);
+  Object.keys(store.cards).forEach(function (id) {
+    if (store.NODES[id]) placeCard(id, card(id) ? card(id).parent : null);
   });
-  Object.keys(store.cardEls).forEach(function (id) {
-    renderCard(id);
-  });
+  placedIds().forEach(function (id) { renderCard(id); });
 }
 
 export function syncActiveTab() {
   if (!store.activeRoot) return;
   const t = store.tabs.get(store.activeRoot);
   if (!t) return;
-  t.cardEls = store.cardEls;
-  t.state = store.state;
-  t.openMethods = store.openMethods;
-  t.parentOf = store.parentOf;
-  t.methodSet = store.methodSet;
+  t.cards = store.cards;
   t.roots = store.roots;
   t.activated = store.activated;
   t.selectedId = store.selectedId;
   t.selectedRow = store.selectedRow;
   t.trail = store.trail;
   t.scroll = { left: graph.scrollLeft, top: graph.scrollTop };
-  t.nodes = Array.prototype.slice
-    .call(world.children)
-    .filter(function (el) { return el !== svg; });
+
 }
 
 export function saveTab() {
@@ -168,10 +179,12 @@ export function saveTab() {
 
 // 把一张卡片带回视口左上角。画布是滚动容器，卡片坐标是 world 里的绝对坐标。
 export function scrollToCard(id) {
-  const el = store.cardEls[id];
+  const el = placedEl(id);
   if (!el) return;
   const x = parseFloat(el.style.left) || 0;
   const y = parseFloat(el.style.top) || 0;
   graph.scrollLeft = Math.max(0, x - 40);
   graph.scrollTop = Math.max(0, y - 30);
 }
+
+

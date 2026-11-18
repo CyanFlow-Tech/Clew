@@ -1,4 +1,5 @@
 // shell/projectpanel.js
+import { h } from "../shared/dom.js";
 import { store } from "./store.js";
 import { ICON, applyTitleTint, avatar, basename, colorFor, initials, normPath, recent } from "./util.js";
 import { projectButton } from "./titlebar.js";
@@ -11,16 +12,10 @@ projectPop.hidden = true;
 document.body.appendChild(projectPop);
 
 export function projectRow(p, onClick) {
-  const row = document.createElement("div");
-  row.className = "pp-row";
-  const meta = document.createElement("div");
-  meta.className = "pp-meta";
-  const name = document.createElement("div");
-  name.className = "pp-name";
-  name.textContent = p.name;
-  const path = document.createElement("div");
-  path.className = "pp-path";
-  path.textContent = p.path;
+  const row = h("div", { class: "pp-row" });
+  const meta = h("div", { class: "pp-meta" });
+  const name = h("div", { class: "pp-name", text: p.name });
+  const path = h("div", { class: "pp-path", text: p.path });
   meta.appendChild(name);
   meta.appendChild(path);
   row.appendChild(avatar(p.name, "pp-avatar"));
@@ -30,24 +25,20 @@ export function projectRow(p, onClick) {
 }
 
 export function groupLabel(text) {
-  const d = document.createElement("div");
-  d.className = "pp-group";
-  d.textContent = text;
+  const d = h("div", { class: "pp-group", text: text });
   return d;
 }
 
 export function sepLine() {
-  const d = document.createElement("div");
-  d.className = "pp-sep";
+  const d = h("div", { class: "pp-sep" });
   return d;
 }
 
 export function renderProjectPop() {
   projectPop.innerHTML = "";
 
-  const openItem = document.createElement("button");
-  openItem.className = "pp-item hl";
-  openItem.innerHTML = '<span class="ico">' + ICON.folder + "</span>打开新项目";
+  const openItem = h("button", { class: "pp-item hl" });
+  openItem.innerHTML = `<span class="ico">${ICON.folder}</span>打开新项目`;
   openItem.onclick = () => {
     closeProjectPop();
     chooseFolder();
@@ -63,9 +54,7 @@ export function renderProjectPop() {
   if (current) {
     projectPop.appendChild(projectRow(current, () => closeProjectPop()));
   } else {
-    const hint = document.createElement("div");
-    hint.className = "pp-hint";
-    hint.textContent = "当前没有打开的项目";
+    const hint = h("div", { class: "pp-hint", text: "当前没有打开的项目" });
     projectPop.appendChild(hint);
   }
 

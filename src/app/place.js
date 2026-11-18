@@ -1,7 +1,7 @@
 // app/place.js
 import { ensure } from "./data.js";
 import { world } from "./dom.js";
-import { store } from "./store.js";
+import { cardRec, placedEl, store } from "./store.js";
 import { classOf, isCtor, isMethod, methodSetOf, renderCard } from "./card.js";
 import { relayout } from "./layout.js";
 import { hideBubble } from "./edge.js";
@@ -10,15 +10,15 @@ import { persistWorkspace } from "./workspace.js";
 
 // ─── 放置 / 关闭 / 引用计数 ─────────────────────────────────────
 export function placeCard(id, parentHint) {
-  if (!store.NODES[id] || store.cardEls[id]) return;
+  if (!store.NODES[id] || placedEl(id)) return;
   const el = document.createElement("div");
   el.dataset.id = id;
   el.style.transition = "none";
   world.appendChild(el);
-  store.cardEls[id] = el;
-  store.state[id] = store.state[id] || "summary";
+  const rec = cardRec(id);
+  rec.el = el;
   const parent = parentHint || firstPlacedCaller(id);
-  if (parent) store.parentOf[id] = parent;
+  if (parent) rec.parent = parent;
   renderCard(id);
   requestAnimationFrame(function () { el.style.transition = ""; });
 }
@@ -46,11 +46,11 @@ export async function expand(id, parentHint, viaCs) {
   if (isMethod(id)) {
     const cls = classOf(id);
     if (!isCtor(id)) methodSetOf(cls).add(id);
-    if (!store.cardEls[cls] && store.NODES[cls]) placeCard(cls, parentHint);
-    if (store.cardEls[cls]) renderCard(cls);   // 目录里补上这一行
+    if (!placedEl(cls) && store.NODES[cls]) placeCard(cls, parentHint);
+    if (placedEl(cls)) renderCard(cls);   // 目录里补上这一行
   }
 
-  placeCard(id, isMethod(id) && store.cardEls[classOf(id)] ? classOf(id) : parentHint);
+  placeCard(id, isMethod(id) && placedEl(classOf(id)) ? classOf(id) : parentHint);
 
   // 类被实例化就意味着构造会跑：类目录和 __init__ 卡片一起出来
   const self = store.NODES[id];
@@ -65,7 +65,7 @@ export async function expand(id, parentHint, viaCs) {
 
 export function firstPlacedCaller(id) {
   const k = Object.keys(store.CALLS).find(function (k) {
-    return store.CALLS[k].to === id && store.cardEls[store.CALLS[k].from];
+    return store.CALLS[k].to === id && placedEl(store.CALLS[k].from);
   });
   return k ? store.CALLS[k].from : null;
 }
@@ -73,7 +73,7 @@ export function firstPlacedCaller(id) {
 // 引用计数：谁还在引用这张卡
 export function incomingPlaced(id) {
   return Object.keys(store.CALLS).filter(function (k) {
-    return store.CALLS[k].to === id && store.cardEls[store.CALLS[k].from] && store.CALLS[k].from !== id;
+    return store.CALLS[k].to === id && placedEl(store.CALLS[k].from) && store.CALLS[k].from !== id;
   }).map(function (k) { return store.CALLS[k].from; });
 }
 
@@ -87,7 +87,7 @@ export function closeCard(id) {
   removeNode(id);
 
   children.forEach(function (child) {
-    if (!store.cardEls[child] || store.roots.has(child)) return;
+    if (!placedEl(child) || store.roots.has(child)) return;
     if (incomingPlaced(child).length === 0) closeCard(child);
   });
   hideBubble();
@@ -95,14 +95,11 @@ export function closeCard(id) {
 }
 
 export function removeNode(id) {
-  if (!store.cardEls[id]) return;
-  if (store.NODES[id] && store.NODES[id].kind === "class") {
-    Array.from(store.methodSet[id] || []).forEach(function (mid) { delete store.openMethods[mid]; });
-    delete store.methodSet[id];
-  }
-  store.cardEls[id].remove();
-  delete store.cardEls[id];
-  delete store.openMethods[id];
-  delete store.parentOf[id];
-  delete store.state[id];
+  const rec = store.cards[id];
+  if (!rec || !rec.el) return;
+  rec.el.remove();
+  // 记录一起删：关掉的卡不该再被工作区快照恢复回来
+  delete store.cards[id];
 }
+
+

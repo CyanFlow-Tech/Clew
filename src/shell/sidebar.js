@@ -47,14 +47,10 @@ export function st() {
 // 最下面钉一个齿轮，进设置。
 export const rail = document.createElement("div");
 rail.id = "side-rail";
-rail.innerHTML =
-  '<button type="button" class="rail-btn on" data-tab="tree" title="符号树">' +
-    ICON.folder + "</button>" +
-  '<button type="button" class="rail-btn" data-tab="search" title="搜索">' +
-    ICON.search +
-  "</button>" +
-  '<button type="button" class="rail-btn rail-pin" id="rail-settings" title="设置">' +
-    ICON.gear + "</button>";
+rail.innerHTML = `
+  <button type="button" class="rail-btn on" data-tab="tree" title="符号树">${ICON.folder}</button>
+  <button type="button" class="rail-btn" data-tab="search" title="搜索">${ICON.search}</button>
+  <button type="button" class="rail-btn rail-pin" id="rail-settings" title="设置">${ICON.gear}</button>`;
 document.body.appendChild(rail);
 
 // 活动栏的齿轮：它不是 tab，别带 data-tab，否则会被面板的切换逻辑收走

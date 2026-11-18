@@ -9,14 +9,15 @@ import { closeProject } from "./project.js";
 export const confirmLayer = document.createElement("div");
 confirmLayer.id = "w-confirm";
 confirmLayer.hidden = true;
-confirmLayer.innerHTML =
-  '<div class="cf-card">' +
-  '<h3 id="cf-title"></h3>' +
-  '<p id="cf-body"></p>' +
-  '<div class="cf-actions">' +
-  '<button id="cf-cancel" type="button">取消</button>' +
-  '<button id="cf-ok" class="danger" type="button">删除</button>' +
-  "</div></div>";
+confirmLayer.innerHTML = `
+  <div class="cf-card">
+    <h3 id="cf-title"></h3>
+    <p id="cf-body"></p>
+    <div class="cf-actions">
+      <button id="cf-cancel" type="button">取消</button>
+      <button id="cf-ok" class="danger" type="button">删除</button>
+    </div>
+  </div>`;
 
 export const cfTitle = confirmLayer.querySelector("#cf-title");
 export const cfBody = confirmLayer.querySelector("#cf-body");

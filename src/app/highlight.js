@@ -1,8 +1,9 @@
 // app/highlight.js
+import { h } from "../shared/dom.js";
 import { esc } from "../shared/format.js";
 import { icon } from "../shared/icons.js";
 import { ensure } from "./data.js";
-import { store } from "./store.js";
+import { placedEl, store } from "./store.js";
 import { renderCard } from "./card.js";
 import { expand } from "./place.js";
 import { relayout } from "./layout.js";
@@ -50,9 +51,7 @@ export function restoreTemps(row) {
     TMP_BACK.lastIndex = 0;
     while ((m = TMP_BACK.exec(text))) {
       if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-      const span = document.createElement("span");
-      span.className = "tmp";
-      span.textContent = "%" + m[1];
+      const span = h("span", { class: "tmp", text: "%" + m[1] });
       frag.appendChild(span);
       last = m.index + m[0].length;
     }
@@ -74,8 +73,7 @@ export function markExternal(row, target, imported) {
     if (parent.classList && parent.classList.contains("ext")) continue;
     const m = re.exec(node.nodeValue);
     if (!m) continue;
-    const span = document.createElement("span");
-    span.className = "ext";
+    const span = h("span", { class: "ext" });
     if (imported) span.title = imported;
     span.textContent = m[0];
     const frag = document.createDocumentFragment();
@@ -91,8 +89,7 @@ export function markExternal(row, target, imported) {
 }
 
 export function renderLine(ln, host, ownerId) {
-  const row = document.createElement("div");
-  row.className = "ln " + ln.k;
+  const row = h("div", { class: "ln " + ln.k });
   row.style.paddingLeft = (34 + (ln.indent || 0) * 12) + "px";
   const c = ln.cs ? store.CALLS[ln.cs] : null;
   const lit = highlightLine(ln.text);
@@ -104,9 +101,7 @@ export function renderLine(ln, host, ownerId) {
   }
   if (c && c.imported && c.target) markExternal(row, c.target, c.imported);
   if (ln.ln) {
-    const num = document.createElement("span");
-    num.className = "lnum";
-    num.textContent = ln.ln;
+    const num = h("span", { class: "lnum", text: ln.ln });
     row.appendChild(num);
   }
   if (c && c.to) {
@@ -114,12 +109,12 @@ export function renderLine(ln, host, ownerId) {
     let cls = "anchor";
     if (c.conf === "heur") cls += " heur";
     else if (c.conf === "poly") cls += " poly";
-    else if (store.cardEls[c.to]) cls += " done";
+    else if (placedEl(c.to)) cls += " done";
     a.className = cls;
     a.dataset.cs = ln.cs;
     const cnt = c.candidates && c.candidates.length > 1
       ? (c.candidates.length > 9 ? "+" : c.candidates.length) : "";
-    a.innerHTML = icon("enter") + (cnt ? '<span class="cnt">' + cnt + "</span>" : "");
+    a.innerHTML = `${icon("enter")}${cnt ? `<span class="cnt">${cnt}</span>` : ""}`;
     if (store.selectedCs === ln.cs) a.className += " on";
     a.title = "展开并显示这一跳的实参绑定";
     a.onmouseenter = function (ev) {
@@ -137,7 +132,7 @@ export function renderLine(ln, host, ownerId) {
       hideBubble();
       store.selectedCs = ln.cs;
       ensure(c.to ? [c.to] : []).then(function () {
-        if (ownerId && store.cardEls[ownerId]) { renderCard(ownerId); relayout(); }
+        if (ownerId && placedEl(ownerId)) { renderCard(ownerId); relayout(); }
         expand(c.to, c.from, ln.cs);
       });
     };
@@ -145,15 +140,11 @@ export function renderLine(ln, host, ownerId) {
   } else if (c && c.candidates && c.candidates.length > 1) {
     // 接收者类型不知道，同名方法有一堆：不假装解析到了某一个，
     // 给出候选让人自己挑。悬停或点击都把气泡打开。
-    const a = document.createElement("span");
-    a.className = "anchor poly";
-    a.innerHTML =
-      icon("enter") +
-      '<span class="cnt">' +
-      (c.candidates.length > 9 ? "+" : c.candidates.length) +
-      "</span>";
+    const a = h("span", { class: "anchor poly" });
+    const many = c.candidates.length > 9 ? "+" : c.candidates.length;
+    a.innerHTML = `${icon("enter")}<span class="cnt">${many}</span>`;
     if (store.selectedCs === ln.cs) a.className += " on";
-    a.title = "接收者类型未知，同名方法有 " + c.candidates.length + " 个候选，点开挑一个";
+    a.title = `接收者类型未知，同名方法有 ${c.candidates.length} 个候选，点开挑一个`;
     const load = function (ev) {
       showBubble(ln.cs, ev);
       ensure(c.candidates).then(function () {
@@ -168,8 +159,7 @@ export function renderLine(ln, host, ownerId) {
     };
     row.appendChild(a);
   } else if (c) {
-    const a = document.createElement("span");
-    a.className = "anchor dead";
+    const a = h("span", { class: "anchor dead" });
     a.innerHTML = icon("enter");
     a.title = "未解析（" + (c.conf === "builtin" ? "内置/库函数" : "找不到定义") + "）";
     row.appendChild(a);
@@ -178,9 +168,7 @@ export function renderLine(ln, host, ownerId) {
 
   // 被选中的调用：下一行插入实参绑定注释
   if (c && store.selectedCs === ln.cs) {
-    const box = document.createElement("div");
-    box.className = "bind";
-    box.textContent = bindingText(c);
+    const box = h("div", { class: "bind", text: bindingText(c) });
     host.appendChild(box);
   }
 }
@@ -198,4 +186,7 @@ export function bindingText(c) {
   });
   return parts.join("      ");
 }
+
+
+
 

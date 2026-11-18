@@ -1,4 +1,5 @@
 // shell/settings-block.js
+import { h } from "../shared/dom.js";
 // 设置页的一块：标题 + 一行（路径框 + 迁移）。两块只有「搬什么」不同。
 import { api } from "./boot.js";
 import { normPath } from "./util.js";
@@ -26,20 +27,17 @@ export const ST_TEXT = {
 /// `notify(kind)` 由设置页给，用来把别的容器（欢迎页那份）的同一块刷新过来。
 export function directoryBlock(kind, notify) {
   const isCache = kind === "cache";
-  const box = document.createElement("div");
-  box.className = "st-pane";
-  box.dataset.block = kind;
-  box.innerHTML =
-    '<div class="st-h">' + (isCache ? ST_TEXT.cache : ST_TEXT.data) + "</div>" +
-    '<div class="st-field">' +
-      '<span class="st-k">' + ST_TEXT.pathLabel + "</span>" +
-      '<input class="st-input" data-k="path" readonly spellcheck="false">' +
-      '<button type="button" class="st-btn" data-k="default" disabled>' +
-      ST_TEXT.toDefault + "</button>" +
-      '<button type="button" class="st-btn" data-k="migrate" disabled>' +
-      ST_TEXT.migrate + "</button>" +
-    "</div>" +
-    '<div class="st-note" data-k="note" hidden></div>';
+  const box = h("div", { class: "st-pane", dataset: { block: kind } });
+  const title = isCache ? ST_TEXT.cache : ST_TEXT.data;
+  box.innerHTML = `
+    <div class="st-h">${title}</div>
+    <div class="st-field">
+      <span class="st-k">${ST_TEXT.pathLabel}</span>
+      <input class="st-input" data-k="path" readonly spellcheck="false">
+      <button type="button" class="st-btn" data-k="default" disabled>${ST_TEXT.toDefault}</button>
+      <button type="button" class="st-btn" data-k="migrate" disabled>${ST_TEXT.migrate}</button>
+    </div>
+    <div class="st-note" data-k="note" hidden></div>`;
 
   const pathEl = box.querySelector('[data-k="path"]');
   const defaultBtn = box.querySelector('[data-k="default"]');

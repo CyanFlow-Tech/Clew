@@ -1,4 +1,5 @@
 // shell/sidesearch.js
+import { h } from "../shared/dom.js";
 import { store } from "./store.js";
 import { api } from "./boot.js";
 import { spListSearch, spQName, spQPath } from "./sidebase.js";
@@ -68,9 +69,7 @@ export function spSearchRender() {
 
   spListSearch.innerHTML = "";
   if (!rows.length) {
-    const empty = document.createElement("div");
-    empty.className = "sp-empty";
-    empty.textContent = spSearch.busy ? "" : "没有匹配";
+    const empty = h("div", { class: "sp-empty", text: spSearch.busy ? "" : "没有匹配" });
     spListSearch.appendChild(empty);
     return;
   }

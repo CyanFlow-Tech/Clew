@@ -67,8 +67,7 @@ window.__CLEW_ASSETS__ = [
 // 开发期给模块 URL 加版本串：WebView 会缓存，改了刷新还是旧内容。
 // 静态 import 带不了参数，所以入口模块用动态 import 加载。
 function versioned(path) {
-  const dev =
-    location.hostname === "127.0.0.1" || location.hostname === "localhost";
+  const dev = location.hostname === "127.0.0.1" || location.hostname === "localhost";
   return dev ? path + "?v=" + Date.now() : path;
 }
 

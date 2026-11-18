@@ -1,4 +1,5 @@
 // shell/filemenu.js
+import { h } from "../shared/dom.js";
 import { ICON } from "./util.js";
 import { burger, menu, projectButton, row1 } from "./titlebar.js";
 import { closeProjectPop, projectPop } from "./projectpanel.js";
@@ -30,15 +31,13 @@ export function openSub(anchor, items) {
   subPop.innerHTML = "";
   for (const item of items) {
     if (item === "-") {
-      const s = document.createElement("div");
-      s.className = "sep";
+      const s = h("div", { class: "sep" });
       subPop.appendChild(s);
       continue;
     }
     const b = document.createElement("button");
     if (item.icon) {
-      const mark = document.createElement("span");
-      mark.className = "mi";
+      const mark = h("span", { class: "mi" });
       mark.innerHTML = item.icon;
       b.appendChild(mark);
     }
@@ -63,15 +62,13 @@ export function popAt(anchor, items) {
   pop.innerHTML = "";
   for (const item of items) {
     if (item === "-") {
-      const s = document.createElement("div");
-      s.className = "sep";
+      const s = h("div", { class: "sep" });
       pop.appendChild(s);
       continue;
     }
     const b = document.createElement("button");
     if (item.icon) {
-      const mark = document.createElement("span");
-      mark.className = "mi";
+      const mark = h("span", { class: "mi" });
       mark.innerHTML = item.icon;
       b.appendChild(mark);
     }

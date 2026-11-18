@@ -1,4 +1,5 @@
 // shell/siderows.js
+import { h } from "../shared/dom.js";
 import { store } from "./store.js";
 import { ICON, basename } from "./util.js";
 import { STAR_SVG } from "../shared/icons.js";
@@ -15,47 +16,43 @@ export const CARET_OPEN = ICON.chevronDown;
 
 export function spRowEl(r) {
   const el = document.createElement("div");
-  el.className =
-    "sp-row" + (r.kind === "note" ? " note" : "") + (r.third ? " third" : "");
+  el.className = `sp-row${r.kind === "note" ? " note" : ""}${r.third ? " third" : ""}`;
   el.style.paddingLeft = 6 + r.depth * 11 + "px";
   el.dataset.depth = String(r.depth);
   if (r.kind === "dir") {
     el.dataset.dir = r.dir;
     el.title = r.dir;
-    el.innerHTML =
-      '<span class="caret" data-act="caret">' + (r.open ? CARET_OPEN : CARET_SHUT) + "</span>" +
-      '<span class="ic">' + ICON.folder + "</span>" +
-      '<span class="nm">' + esc(r.name) + "</span>";
+    el.innerHTML = `
+      <span class="caret" data-act="caret">${r.open ? CARET_OPEN : CARET_SHUT}</span>
+      <span class="ic">${ICON.folder}</span>
+      <span class="nm">${esc(r.name)}</span>`;
     return el;
   }
   if (r.kind === "file") {
     el.dataset.mod = r.module;
     el.title = r.path;
-    el.innerHTML =
-      '<span class="caret" data-act="caret">' + (r.open ? CARET_OPEN : CARET_SHUT) + "</span>" +
-      '<span class="nm">' + esc(basename(r.path)) + "</span>";
+    el.innerHTML = `
+      <span class="caret" data-act="caret">${r.open ? CARET_OPEN : CARET_SHUT}</span>
+      <span class="nm">${esc(basename(r.path))}</span>`;
     return el;
   }
 
   const active = window.getActiveRoot ? window.getActiveRoot() : null;
   if (active && active === r.card) el.classList.add("sel");
   const star = favorites.has(r.card);
-  const flagHtml =
-    '<span class="flag ' + (star ? "on" : "off") + '" data-fav="' + esc(r.card) +
-    '" title="标记入口">' + STAR_SVG + "</span>";
+  const flagHtml = `
+    <span class="flag ${star ? "on" : "off"}" data-fav="${esc(r.card)}" title="标记入口">${STAR_SVG}</span>`;
 
   // 一行函数名，一行文件名当注释：一行硬塞两个名字在窄面板里必然被截断
   if (r.kind === "entry") {
     el.dataset.card = r.card;
     el.dataset.module = r.module || "";
     el.title = (r.file ? r.file : r.module) + ":" + showQual(r.qual);
-    el.innerHTML =
-      '<span class="caret"></span>' +
-      '<span class="ic">\u0192</span>' +
-      '<span class="nm fn">' +
-      (r.hot && r.hotName ? markHit(shortName(r.card), r.hotName) : esc(shortName(r.card))) +
-      "</span>" +
-      '<span class="tail">' + flagHtml + "</span>";
+    el.innerHTML = `
+      <span class="caret"></span>
+      <span class="ic">\u0192</span>
+      <span class="nm fn">${r.hot && r.hotName ? markHit(shortName(r.card), r.hotName) : esc(shortName(r.card))}</span>
+      <span class="tail">${flagHtml}</span>`;
     return el;
   }
   if (r.kind === "more") {
@@ -68,29 +65,27 @@ export function spRowEl(r) {
     // 点它跟点上面那行函数一样，打开同一个符号
     el.style.paddingLeft = 6 + r.depth * 11 + 31 + "px";
     el.dataset.card = r.card;
-    el.innerHTML =
-      '<span class="note-file">' +
-      (r.hot && r.hotPath ? markHit(r.file, r.hotPath) : esc(r.file)) +
-      "</span>";
+    el.innerHTML = `
+      <span class="note-file">${r.hot && r.hotPath ? markHit(r.file, r.hotPath) : esc(r.file)}</span>`;
     return el;
   }
 
   const caret = r.kids
-    ? '<span class="caret" data-act="caret">' + (r.open ? CARET_OPEN : CARET_SHUT) + "</span>"
+    ? `<span class="caret" data-act="caret">${r.open ? CARET_OPEN : CARET_SHUT}</span>`
     : '<span class="caret"></span>';
   const ic = r.kindName === "class" ? "C" : r.kindName === "method" ? "M" : "\u0192";
   el.dataset.card = r.card;
   el.dataset.module = r.module || "";
   el.title = r.module + ":" + showQual(r.qual || "");
-  el.innerHTML =
-    caret +
-    '<span class="ic">' + ic + "</span>" +
-    '<span class="nm">' + esc(shortName(r.card)) + "</span>" +
-    (r.isEntry ? '<span class="edot" title="自动识别的入口"></span>' : "") +
-    '<span class="tail">' +
-      (r.showModule ? '<span class="mod">' + esc(r.module) + "</span>" : "") +
-      flagHtml +
-    "</span>";
+  el.innerHTML = `
+    ${caret}
+    <span class="ic">${ic}</span>
+    <span class="nm">${esc(shortName(r.card))}</span>
+    ${r.isEntry ? '<span class="edot" title="自动识别的入口"></span>' : ""}
+    <span class="tail">
+      ${r.showModule ? `<span class="mod">${esc(r.module)}</span>` : ""}
+      ${flagHtml}
+    </span>`;
   return el;
 }
 
@@ -123,8 +118,7 @@ export async function spRender() {
   spRows = rows;
   spDrawn = 0;
   if (!rows.length) {
-    const empty = document.createElement("div");
-    empty.className = "sp-empty";
+    const empty = h("div", { class: "sp-empty" });
     empty.textContent =
       store.spView === "fav"
         ? "给定义按 ★ 就会出现在这里"

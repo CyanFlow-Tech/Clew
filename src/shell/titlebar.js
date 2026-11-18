@@ -1,4 +1,5 @@
 // shell/titlebar.js
+import { h } from "../shared/dom.js";
 import { store } from "./store.js";
 import { ICON, LOGO_IMG } from "./util.js";
 
@@ -8,7 +9,7 @@ export const trail = document.getElementById("trail");
 
 export const brand = document.createElement("span");
 brand.className = "tb-brand";
-brand.innerHTML = LOGO_IMG + '<span class="tb-title">Clew</span>';
+brand.innerHTML = `${LOGO_IMG}<span class="tb-title">Clew</span>`;
 store.brandTitle = brand.querySelector(".tb-title");
 
 export const burger = document.createElement("button");
@@ -20,18 +21,15 @@ burger.title = "菜单";
 export const projectButton = document.createElement("button");
 projectButton.className = "tb-project";
 projectButton.id = "project-button";
-projectButton.innerHTML =
-  '<span class="pj-avatar"></span><span class="pj-name"></span>' +
-  '<span class="pj-caret">' + ICON.chevronDown + "</span>";
+projectButton.innerHTML = `
+  <span class="pj-avatar"></span><span class="pj-name"></span>
+  <span class="pj-caret">${ICON.chevronDown}</span>`;
 
 export const menu = document.createElement("div");
 menu.id = "tb-menu";
 menu.hidden = true;
 for (const [key, label] of [["file", "文件"], ["theme", "主题"], ["help", "帮助"]]) {
-  const item = document.createElement("button");
-  item.className = "tb-menu-item";
-  item.dataset.menu = key;
-  item.textContent = label;
+  const item = h("button", { class: "tb-menu-item", text: label, dataset: { menu: key } });
   menu.appendChild(item);
 }
 
@@ -50,12 +48,11 @@ row1.appendChild(menu);
 
 // 窗口控制按钮：系统标题栏已经关掉了，这三个是唯一的入口
 {
-  const winctl = document.createElement("div");
-  winctl.id = "tb-winctl";
-  winctl.innerHTML =
-    '<button class="win-btn" data-win="min" title="最小化">' + ICON.min + "</button>" +
-    '<button class="win-btn" data-win="max" title="最大化">' + ICON.max + "</button>" +
-    '<button class="win-btn close" data-win="close" title="关闭">' + ICON.close + "</button>";
+  const winctl = h("div", { id: "tb-winctl" });
+  winctl.innerHTML = `
+    <button class="win-btn" data-win="min" title="最小化">${ICON.min}</button>
+    <button class="win-btn" data-win="max" title="最大化">${ICON.max}</button>
+    <button class="win-btn close" data-win="close" title="关闭">${ICON.close}</button>`;
   row1.appendChild(winctl);
 
   const win = window.__TAURI__.window.getCurrentWindow();

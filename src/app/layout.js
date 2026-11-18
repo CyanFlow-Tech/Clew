@@ -1,12 +1,12 @@
 // app/layout.js
 import { CARD_W, COL_GAP, ROW_GAP } from "./env.js";
-import { store } from "./store.js";
+import { placedEl, placedIds, store } from "./store.js";
 import { incomingPlaced } from "./place.js";
 import { draw } from "./edge.js";
 
 // ─── 布局：分层 + 同列按父位置排序（稳定顺序） ──────────────────
 export function layoutOrder() {
-  const placed = Object.keys(store.cardEls);
+  const placed = placedIds();
   const placedSet = new Set(placed);
   const depth = {};
   const rootsPlaced = placed.filter(function (id) {
@@ -45,10 +45,10 @@ export function layoutOrder() {
 }
 
 export function avgParentY(id) {
-  const inc = incomingPlaced(id).filter(function (p) { return store.cardEls[p]; });
+  const inc = incomingPlaced(id).filter(function (p) { return placedEl(p); });
   if (!inc.length) return 0;
   let sum = 0;
-  inc.forEach(function (p) { sum += Number(store.cardEls[p].style.top.replace("px", "")) || 0; });
+  inc.forEach(function (p) { sum += Number(placedEl(p).style.top.replace("px", "")) || 0; });
   return sum / inc.length;
 }
 
@@ -67,14 +67,14 @@ export function relayout() {
   depths.forEach(function (d) {
     let y = 50;
     cols[d].forEach(function (id) {
-      const el = store.cardEls[id];
+      const el = placedEl(id);
       if (!el) return;
       el.style.left = x + "px";
       el.style.top = y + "px";
       y += el.offsetHeight + ROW_GAP;
     });
     const widest = Math.max.apply(null, cols[d].map(function (id) {
-      return (store.cardEls[id] && store.cardEls[id].offsetWidth) || CARD_W;
+      return (placedEl(id) && placedEl(id).offsetWidth) || CARD_W;
     }));
     x += widest + COL_GAP;
   });
@@ -90,4 +90,6 @@ export function animateDraw(ms) {
     if (performance.now() - t0 < ms) requestAnimationFrame(step);
   })();
 }
+
+
 

@@ -1,7 +1,7 @@
 // app/loadtab.js
 import { ensure } from "./data.js";
 import { graph, svg, world } from "./dom.js";
-import { store } from "./store.js";
+import { placedEl, placedIds, store } from "./store.js";
 import { renderCard } from "./card.js";
 import { expand } from "./place.js";
 import { relayout } from "./layout.js";
@@ -13,11 +13,7 @@ export function loadTab(rootId) {
   const t = ensureTab(rootId);
   if (!t) return;
   store.activeRoot = rootId;
-  store.cardEls = t.cardEls;
-  store.state = t.state;
-  store.openMethods = t.openMethods;
-  store.parentOf = t.parentOf;
-  store.methodSet = t.methodSet;
+  store.cards = t.cards;
   store.roots = t.roots;
   store.activated = t.activated;
   store.selectedId = t.selectedId;
@@ -31,7 +27,7 @@ export function loadTab(rootId) {
   Array.prototype.slice.call(world.children).forEach(function (el) {
     if (el !== svg) world.removeChild(el);
   });
-  t.nodes.forEach(function (el) { world.appendChild(el); });
+  placedIds(t).forEach(function (id) { world.appendChild(t.cards[id].el); });
   hydrateTab();
 
   refreshSelectionUI(store.selectedId);
@@ -56,7 +52,7 @@ export async function openRoot(rootId) {
   if (!t) return;
   // 先把根的卡片取回来再动画布。反过来的话，任何一次取数失败都会把画布清空，
   // 之后点哪个入口都只剩空白，只能靠重启解救。
-  if (!t.nodes.length && !store.NODES[rootId]) {
+  if (!placedIds(t).length && !store.NODES[rootId]) {
     try {
       await ensure([rootId]);
     } catch (err) {
@@ -71,7 +67,7 @@ export async function openRoot(rootId) {
   }
   saveTab();
   loadTab(rootId);
-  if (!t.nodes.length) {
+  if (!placedIds(t).length) {
     // 只有第一次开这个根才去取它的卡片
     store.roots.add(rootId);
     await expand(rootId);
@@ -85,7 +81,7 @@ window.bootProject = bootProject;
 window.openRoot = openRoot;
 window.getActiveRoot = function () { return store.activeRoot; };
 window.__clewRefreshCard = function (id) {
-  if (store.cardEls[id]) renderCard(id);
+  if (placedEl(id)) renderCard(id);
 };
 
 // 换项目时整份换掉：数据、画布、每个根的状态全部重建
@@ -102,11 +98,7 @@ export async function bootProject(entriesOrRoot) {
     if (el !== svg) world.removeChild(el);
   });
 
-  store.cardEls = {};
-  store.state = {};
-  store.openMethods = {};
-  store.parentOf = {};
-  store.methodSet = {};
+  store.cards = {};
   store.roots = new Set();
   store.activated = new Set();
   store.selectedId = null;
@@ -185,4 +177,6 @@ graph.addEventListener("scroll", function () { persistWorkspace(); });
     true
   );
 })();
+
+
 

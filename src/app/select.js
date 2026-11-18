@@ -1,7 +1,8 @@
 // app/select.js
+import { h } from "../shared/dom.js";
 import { showId } from "../shared/format.js";
 import { focusLayer, world } from "./dom.js";
-import { store } from "./store.js";
+import { card, placedEl, placedIds, store } from "./store.js";
 import { classOf, isMethod } from "./card.js";
 import { expand } from "./place.js";
 
@@ -9,7 +10,7 @@ import { expand } from "./place.js";
 export function openFocus(id) {
   focusLayer.style.display = "block";
   focusLayer.innerHTML = "";
-  const clone = store.cardEls[id].cloneNode(true);
+  const clone = placedEl(id).cloneNode(true);
   clone.style.position = "relative";
   clone.style.left = "auto";
   clone.style.top = "auto";
@@ -23,7 +24,12 @@ focusLayer.addEventListener("click", function (e) { if (e.target === focusLayer)
 export function chainOf(id) {
   const out = [], guard = new Set();
   let cur = id;
-  while (cur && !guard.has(cur)) { guard.add(cur); out.unshift(cur); cur = store.parentOf[cur]; }
+  while (cur && !guard.has(cur)) {
+    guard.add(cur);
+    out.unshift(cur);
+    const rec = card(cur);
+    cur = rec ? rec.parent : null;
+  }
   return out;
 }
 export function select(id) {
@@ -36,8 +42,8 @@ export function select(id) {
 
 // 单一入口：按 selectedId / selectedRow 重算全部高亮，不重建 DOM
 export function refreshSelectionUI(currentId) {
-  Object.keys(store.cardEls).forEach(function (k) {
-    const el = store.cardEls[k];
+  placedIds().forEach(function (k) {
+    const el = placedEl(k);
     if (!el || !el.classList) return;
     el.classList.toggle("sel", k === currentId);
     const owner = store.selectedRow ? classOf(store.selectedRow) : null;
@@ -52,14 +58,12 @@ export function renderTrail() {
   const el = document.getElementById("trail");
   el.innerHTML = "";
   store.trail.forEach(function (id, i) {
-    const s = document.createElement("span");
-    s.textContent = store.NODES[id] ? store.NODES[id].title : showId(id);
+    const s = h("span", { text: store.NODES[id] ? store.NODES[id].title : showId(id) });
     if (i === store.trail.length - 1) s.className = "cur";
     s.onclick = function () { expand(id); };
     el.appendChild(s);
     if (i < store.trail.length - 1) {
-      const sep = document.createElement("i");
-      sep.textContent = "›";
+      const sep = h("i", { text: "›" });
       el.appendChild(sep);
     }
   });
@@ -71,11 +75,7 @@ export function blankTab(rootId) {
   return {
     entryId: rootId,
     label: rootId,
-    cardEls: {},
-    state: {},
-    openMethods: {},
-    parentOf: {},
-    methodSet: {},
+    cards: {},
     roots: new Set(),
     activated: new Set(),
     selectedId: null,
@@ -93,3 +93,4 @@ export function ensureTab(rootId) {
   if (!store.tabs.has(rootId)) store.tabs.set(rootId, blankTab(rootId));
   return store.tabs.get(rootId);
 }
+

@@ -1,4 +1,5 @@
 // shell/welcome.js
+import { h } from "../shared/dom.js";
 import { VERSION, api } from "./boot.js";
 import { ICON, avatar, recent, setHidden } from "./util.js";
 import { askDelete } from "./confirm.js";
@@ -104,41 +105,29 @@ export function welcomeRow(p) {
   const li = document.createElement("li");
   li.appendChild(avatar(p.name, "w-avatar"));
 
-  const meta = document.createElement("div");
-  meta.className = "w-meta";
-  const nameline = document.createElement("div");
-  nameline.className = "w-nameline";
-  const name = document.createElement("div");
-  name.className = "w-name";
-  name.textContent = p.name;
+  const meta = h("div", { class: "w-meta" });
+  const nameline = h("div", { class: "w-nameline" });
+  const name = h("div", { class: "w-name", text: p.name });
   nameline.appendChild(name);
 
   // 目录被外部删掉的记录，名字后面挂一个感叹号，鼠标停上去说明原因
   const gone = !!missing[p.path];
   if (gone) {
     li.classList.add("gone");
-    const badge = document.createElement("span");
-    badge.className = "w-missing";
-    badge.title = "路径不存在：" + p.path;
+    const badge = h("span", { class: "w-missing", title: "路径不存在：" + p.path });
     badge.innerHTML = ICON.warn;
     nameline.appendChild(badge);
   }
 
-  const path = document.createElement("div");
-  path.className = "w-path";
-  path.textContent = p.path;
+  const path = h("div", { class: "w-path", text: p.path });
   meta.appendChild(nameline);
   meta.appendChild(path);
   li.appendChild(meta);
 
-  const acts = document.createElement("div");
-  acts.className = "w-acts";
+  const acts = h("div", { class: "w-acts" });
   acts.onclick = (e) => e.stopPropagation();
 
-  const eye = document.createElement("button");
-  eye.type = "button";
-  eye.className = "w-act";
-  eye.title = p.hidden ? "恢复显示" : "隐藏";
+  const eye = h("button", { type: "button", class: "w-act", title: p.hidden ? "恢复显示" : "隐藏" });
   eye.innerHTML = p.hidden ? ICON.eye : ICON.eyeOff;
   eye.onclick = function (e) {
     e.stopPropagation();
@@ -151,10 +140,7 @@ export function welcomeRow(p) {
   };
   acts.appendChild(eye);
 
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "w-act danger";
-  del.title = "删除项目";
+  const del = h("button", { type: "button", class: "w-act danger", title: "删除项目" });
   del.innerHTML = ICON.trash;
   del.onclick = function (e) {
     e.stopPropagation();
@@ -175,8 +161,7 @@ export function welcomeRow(p) {
 }
 
 export function hintRow(text) {
-  const li = document.createElement("li");
-  li.className = "w-hint";
+  const li = h("li", { class: "w-hint" });
   li.style.cursor = "default";
   li.textContent = text;
   return li;
