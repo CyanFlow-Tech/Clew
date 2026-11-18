@@ -1,0 +1,902 @@
+/* 外壳：标题栏、欢迎页、文件菜单、项目面板、确认框 */
+/* 只有第一行是项目色渐变，第二行工具栏保持原色 */
+#top {
+  --tint-a: rgba(79, 134, 201, 0.34);
+  --tint-b: rgba(79, 134, 201, 0.09);
+  background: #0f1216 !important;
+  height: 78px !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  border-bottom: none !important;
+}
+
+/* 标题栏控件：hover 叠一层半透明白，不换成实色
+   菜单项撑满整行不留圆角，图标和项目按钮保持胶囊 */
+.tb-icon,
+.tb-menu-item,
+.tb-project {
+  background: transparent;
+  border: 1px solid transparent;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.tb-icon:hover,
+.tb-menu-item:hover,
+.tb-project:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.tb-menu-item.open,
+.tb-project.open {
+  background: rgba(255, 255, 255, 0.19);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+/* 活动栏是一直在的（折叠只是收起面板），所以画布左边至少让出 40px，
+   否则折叠后卡片会钻到活动栏底下 */
+#graph {
+  inset: 78px 0 0 40px !important;
+}
+#focus {
+  inset: 78px 0 0 40px !important;
+}
+#tb-row2 {
+  margin-left: 40px;
+}
+#hint {
+  left: 56px;
+}
+#tb-row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  flex: none;
+  padding-left: 10px;
+  background:
+    linear-gradient(
+      96deg,
+      var(--tint-a) 0%,
+      var(--tint-b) 58%,
+      rgba(26, 28, 32, 0.92) 100%
+    ),
+    rgba(26, 28, 32, 0.92);
+}
+#tb-row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  flex: none;
+  padding: 0 12px 0 10px;
+  background: #0f1216;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+#tb-winctl {
+  display: flex;
+  align-items: stretch;
+  margin-left: auto;
+  flex: none;
+}
+.win-btn {
+  width: 46px;
+  height: 44px;
+  background: none;
+  border: none;
+  color: #9aa0a8;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+/* 页面里有一条给画布连线用的 svg{position:absolute;inset:0} 全局规则，
+   图标里的 svg 必须显式回到行内盒，否则会飞到视口左上角 */
+.win-btn svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e8eaed;
+}
+.win-btn.close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.tb-brand {
+  color: var(--acc);
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.tb-brand img {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: block;
+  pointer-events: none;
+}
+.w-brand .tb-brand img {
+  width: 28px;
+  height: 28px;
+}
+.tb-icon {
+  color: var(--tx);
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+/* 菜单图标也是 antd 的路径，同样要显式回到行内盒（理由见 .win-btn svg） */
+.tb-icon svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+.tb-project {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #dfe1e5;
+  font: inherit;
+  padding: 3px 10px 3px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  max-width: 280px;
+}
+.pj-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  flex: none;
+}
+.pj-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pj-caret {
+  color: #9aa0a8;
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+.pj-caret svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+/* 项目面板：仿 PyCharm 的宽下拉 */
+#project-pop {
+  position: fixed;
+  z-index: 80;
+  width: 460px;
+  max-height: 70vh;
+  overflow: auto;
+  background: #2b2d30;
+  border: 1px solid #393b40;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 16px 40px #000a;
+  scrollbar-width: thin;
+}
+#project-pop[hidden] {
+  display: none;
+}
+.pp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: #dfe1e5;
+  font: inherit;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.pp-item:hover {
+  background: #2e436e;
+}
+.pp-item .ico {
+  width: 18px;
+  text-align: center;
+  color: #9aa0a8;
+  flex: none;
+}
+.pp-item .ico svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0 auto;
+}
+.pp-sep {
+  height: 1px;
+  background: #393b40;
+  margin: 4px 6px;
+}
+.pp-group {
+  color: #6f737a;
+  font-size: 11px;
+  padding: 8px 10px 4px;
+  letter-spacing: 0.3px;
+}
+.pp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.pp-row:hover {
+  background: #2e436e;
+}
+.pp-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  flex: none;
+}
+.pp-meta {
+  min-width: 0;
+}
+.pp-name {
+  color: #dfe1e5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-path {
+  color: #6f737a;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.pp-hint {
+  color: #6f737a;
+  font-size: 11px;
+  padding: 6px 10px 10px;
+}
+
+.tb-status {
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34vw;
+  margin-left: auto;
+}
+.tb-status.err {
+  color: #f0883e;
+}
+.tb-status.busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 46vw;
+  margin-left: auto;
+}
+.tb-prog {
+  width: 110px;
+  height: 6px;
+  border-radius: 3px;
+  background: #2b3038;
+  overflow: hidden;
+  flex: none;
+}
+.tb-prog i {
+  display: block;
+  height: 100%;
+  background: var(--acc);
+  width: 0;
+  transition: width 0.25s ease;
+}
+.tb-prog-t {
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tb-menu {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: none;
+}
+#tb-menu[hidden] {
+  display: none;
+}
+.tb-menu-item {
+  color: var(--tx);
+  cursor: pointer;
+  padding: 0 14px;
+  height: 44px;
+  border: none;
+  border-radius: 0;
+  font:
+    14px/1 "LXGW WenKai Mono",
+    "LXGW WenKai",
+    monospace;
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.tb-pop {
+  position: fixed;
+  top: 46px;
+  background: #161b22;
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 96;
+  box-shadow: 0 10px 28px #0009;
+  min-width: 200px;
+}
+.tb-pop[hidden] {
+  display: none;
+}
+.tb-pop button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--tx);
+  padding: 8px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font:
+    14px/1.2 "LXGW WenKai Mono",
+    "LXGW WenKai",
+    monospace;
+  white-space: nowrap;
+}
+.tb-pop button:hover {
+  background: #22303f;
+}
+.tb-pop button:disabled {
+  color: #5c6169;
+  cursor: default;
+}
+.tb-pop button:disabled:hover {
+  background: none;
+}
+.tb-pop .sep {
+  height: 1px;
+  background: var(--bd);
+  margin: 4px 6px;
+}
+.tb-pop .has-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+/* 行内小图标跟着字号走：菜单项的勾、画布行尾的标记、底部提示的图例 */
+.tb-pop .mi {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+.tb-pop .mi svg,
+.hi svg {
+  width: 1em;
+  height: 1em;
+}
+.hi {
+  display: inline-flex;
+  vertical-align: -2px;
+}
+.tb-pop .has-sub svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+.tb-pop.sub-pop {
+  z-index: 97;
+  top: auto;
+  min-width: 180px;
+}
+
+#tb-help {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: #0b0d11cc;
+}
+#tb-help[hidden] {
+  display: none;
+}
+#tb-help .card {
+  background: #161b22;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  padding: 20px 24px;
+  max-width: 520px;
+  line-height: 1.8;
+}
+#tb-help h3 {
+  margin: 0 0 8px;
+  color: var(--acc);
+  font-size: 14px;
+}
+#tb-help kbd {
+  background: #232b36;
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 11px;
+}
+#tb-help .close {
+  float: right;
+  cursor: pointer;
+  color: var(--dim);
+}
+
+/* ── 欢迎页（仿 PyCharm） ─────────────────────────────────── */
+/* 顶部让出标题栏：欢迎页期间窗口按钮必须够得着，不然开错了关不掉 */
+#welcome {
+  position: fixed;
+  inset: 44px 0 0 0;
+  z-index: 95;
+  display: flex;
+  background: #1e1f22;
+  font:
+    13px/1.5 "Segoe UI",
+    system-ui,
+    sans-serif;
+  color: #dfe1e5;
+}
+#welcome[hidden] {
+  display: none;
+}
+body.welcome-open #top {
+  height: 44px !important;
+}
+body.welcome-open #tb-row2 {
+  display: none !important;
+}
+body.welcome-open #project-button {
+  display: none !important;
+}
+body.welcome-open #tb-burger {
+  display: none !important;
+}
+body.welcome-open #graph {
+  inset: 44px 0 0 0 !important;
+}
+/* 标题栏文字：进项目后是品牌蓝，欢迎页是普通白字的欢迎语 */
+.tb-brand .tb-title {
+  color: inherit;
+}
+body.welcome-open .tb-brand .tb-title {
+  color: #dfe1e5;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+#w-side {
+  width: 268px;
+  flex: none;
+  background: #1e1f22;
+  border-right: 1px solid #2b2d30;
+  padding: 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.w-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 10px 18px;
+}
+.w-brand .t {
+  font-size: 15px;
+  font-weight: 600;
+  color: #dfe1e5;
+  line-height: 1.25;
+}
+.w-brand .v {
+  font-size: 11px;
+  color: #6f737a;
+}
+.w-brand .auth {
+  font-size: 11px;
+  color: #6f737a;
+}
+.w-brand .tb-brand img {
+  width: 36px;
+  height: 36px;
+}
+.w-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.w-nav button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: #dfe1e5;
+  font: inherit;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.w-nav button:hover {
+  background: #2b2d30;
+}
+.w-nav button.active {
+  background: #2e436e;
+  color: #e8edf7;
+}
+.w-foot {
+  margin-top: auto;
+  color: #6f737a;
+  font-size: 11px;
+  padding: 8px 10px;
+}
+
+#w-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 26px;
+}
+.w-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #2b2d30;
+}
+.w-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #6f737a;
+}
+.w-search input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: #dfe1e5;
+  font: inherit;
+  outline: none;
+  padding: 4px 0;
+}
+.w-search input::placeholder {
+  color: #6f737a;
+}
+.w-actions {
+  display: flex;
+  gap: 8px;
+}
+/* PyCharm 欢迎页右侧那排按钮：灰底、细边、圆角 6、等高 */
+.w-actions button {
+  height: 34px;
+  padding: 0 16px;
+  background: #393b40;
+  border: 1px solid #4b4e55;
+  border-radius: 6px;
+  color: #dfe1e5;
+  font: inherit;
+  cursor: pointer;
+}
+.w-actions button:hover {
+  background: #45484c;
+  border-color: #5a5e63;
+}
+.w-actions button:active {
+  background: #313335;
+}
+
+#w-recent {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+  scrollbar-width: thin;
+}
+#w-note {
+  color: #6f737a;
+  font-size: 11.5px;
+  padding: 10px 12px;
+  margin: 8px 0 0;
+  border: 1px solid #2b2d30;
+  border-radius: 6px;
+  background: #232529;
+  line-height: 1.6;
+}
+#w-note[hidden] {
+  display: none;
+}
+#w-note.err {
+  color: #f0883e;
+  border-color: #4a3326;
+  background: #2a2118;
+}
+#w-list {
+  overflow: auto;
+  flex: 1;
+  scrollbar-width: thin;
+  margin-top: 6px;
+}
+.w-sec + .w-sec {
+  margin-top: 4px;
+}
+#w-recent,
+#w-hidden {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+#w-hidden[hidden] {
+  display: none;
+}
+.w-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6f737a;
+  font-size: 11.5px;
+  padding: 8px 10px 6px;
+  letter-spacing: 0.4px;
+}
+.w-sec-h.toggle {
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  color: #6f737a;
+  border-radius: 6px;
+}
+.w-sec-h.toggle:hover {
+  color: #dfe1e5;
+}
+.w-sec-h .chev {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+}
+.w-sec-h.open .chev {
+  transform: rotate(90deg);
+}
+.w-sec-h .cnt {
+  color: #6f737a;
+}
+.w-sec-h svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+#w-recent li,
+#w-hidden li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#w-recent li:hover,
+#w-hidden li:hover {
+  background: #2b2d30;
+}
+#w-hidden li {
+  opacity: 0.75;
+}
+.w-acts {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.w-nameline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.w-nameline .w-name {
+  min-width: 0;
+}
+.w-missing {
+  color: #d9a03c;
+  display: inline-flex;
+  flex: none;
+  cursor: help;
+}
+.w-missing svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+#w-recent li.gone .w-name,
+#w-hidden li.gone .w-name {
+  color: #9aa1aa;
+}
+.w-act {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: #8b919a;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+}
+.w-act:hover {
+  background: #33363a;
+  color: #e6e8ea;
+}
+.w-act.danger:hover {
+  background: #3a2626;
+  color: #e06c6c;
+}
+.w-act svg {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+#w-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  display: grid;
+  place-items: center;
+  background: #0b0d11cc;
+}
+#w-confirm[hidden] {
+  display: none;
+}
+.cf-card {
+  background: #161b22;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  padding: 18px 20px;
+  width: min(440px, 86vw);
+  box-shadow: 0 18px 40px #0008;
+}
+.cf-card h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #dfe1e5;
+}
+.cf-card p {
+  margin: 0 0 16px;
+  color: #9aa1aa;
+  font-size: 12.5px;
+  line-height: 1.7;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.cf-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.cf-actions button {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid #33383f;
+  background: #232529;
+  color: #dfe1e5;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.cf-actions button:hover {
+  background: #2b3037;
+}
+.cf-actions .danger {
+  border-color: #5a3232;
+  background: #3a2626;
+  color: #f0a5a5;
+}
+.cf-actions .danger:hover {
+  background: #4a2d2d;
+}
+.w-avatar {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+.w-meta {
+  min-width: 0;
+}
+.w-name {
+  color: #dfe1e5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.w-path {
+  color: #6f737a;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.w-hint {
+  color: #6f737a;
+  padding: 26px 10px;
+  line-height: 1.9;
+}

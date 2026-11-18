@@ -47,13 +47,19 @@ Clew 是 Python 项目的入口地图。Rust 后端用 tree-sitter 解析，数�
 - `crates/clew-core` 解析、索引、搜索
 - `crates/clew-cli` 命令行，所有能力先在这里可验证
 - `src-tauri` 窗口侧命令
-- `src/` 前端，`shell.js` 是外壳与面板，`app.js` 是画布
+- `src/` 前端，`shell/` 是外壳与面板，`app/` 是画布，`css/` 是样式，`boot.js` 负责取数并按顺序加载模块
 
-日常开发用 `.\tools\dev.ps1 -Project <项目>`：它起 1755 上的静态服务，debug 版窗口直接连这个地址加载 `src/`，改 html/js 存盘页面自己刷新，不用重编（`shell.js` 盯着 `index.html`、`app.js`、`shell.js`、`themes.js` 四个文件的 `Last-Modified`，改完自动重载，也可 `Ctrl+R` 手动刷；脚本 URL 带版本串，绕开 WebView 缓存）。只有改 Rust 才重跑。
+前端没有打包器，文件是原生 ES module，靠 `import` 说明依赖，没有全局命名空间。三条约定：
+
+- 可变的共享状态放 `app/store.js` 与 `shell/store.js` 的 `store` 对象里，改属性，不要换对象；只读的常量跟自己的模块走。
+- 模块装载期只建自己的 DOM，不读别的模块的值——循环依赖下那会撞 TDZ。需要别人的函数就在函数体里调。
+- 启动顺序写在各边的 `index.js` 里；`src/boot.js` 取完数据再 `import()` 这两个入口。加模块时把文件加进 `boot.js` 的 `__CLEW_ASSETS__`，热重载才盯得到它。
+
+日常开发用 `.\tools\dev.ps1 -Project <项目>`：它起 1755 上的静态服务，debug 版窗口直接连这个地址加载 `src/`，改 html/js/css 存盘页面自己刷新，不用重编（热重载盯着 `boot.js` 里 `__CLEW_ASSETS__` 列出的全部前端文件，改完自动重载，也可 `Ctrl+R` 手动刷；模块 URL 带版本串，绕开 WebView 缓存）。只有改 Rust 才重跑。
 
 发版才用 `cargo app`（等价 `cargo build -p clew-app --release --features custom-protocol`）。release 必须带 `custom-protocol`，否则二进制里没有前端资源；`src-tauri/src/main.rs` 有编译期断言挡着，忘了带会直接报错而不是打出白窗。
 
-不要自己启动窗口程序，验证界面用浏览器预览加 CDP 查 DOM。
+不要自己启动窗口程序。验证界面用 `tools\side-check.ps1` 与 `tools\settings-check.ps1`：它们给一份 Tauri 桩、起 headless 浏览器，再用 CDP 读 DOM，走的就是窗口里那条路。
 
 ## 九、提交信息
 
@@ -61,6 +67,10 @@ Clew 是 Python 项目的入口地图。Rust 后端用 tree-sitter 解析，数�
 
 ```
 feat(ui): add settings for where Clew keeps its data
+
+What changed:
+1. The data directory and the interface cache are configurable.
+2. One page with two blocks; "default" only fills in the path.
 
 Files:
 - src-tauri/src/main.rs: builds the window in setup, adds the settings
@@ -70,10 +80,6 @@ Files:
 Effects:
 - WebView2 stops writing under %LOCALAPPDATA%.
 
-What changed:
-1. The data directory and the interface cache are configurable.
-2. One page with two blocks; "default" only fills in the path.
-
 Tests:
 - cargo test -p clew-core.
 - tools/settings-check.ps1.
@@ -82,16 +88,30 @@ Tests:
 - 全英文。单行 subject，空一行，然后 body。
 - subject：`type(scope): ` 加一句祈使句，小写开头，不加句号，60 字符以内。type 用 `feat` / `fix` / `perf` / `refactor` / `chore` / `docs`；scope 用模块名，比如 `ui`、`scan`、`search`、`core`、`cli`。
 - body 四段，顺序固定：
-  1. `Files:` 逐条列改动的文件，每条一句说这个文件改了什么。
-  2. `Effects:` 对用户可见的影响。没有就不写这一段。
-  3. `What changed:` 分点写这次改了什么，一点一句，别写成散文。
+  1. `What changed:` 分点写这次改了什么，一点一句，别写成散文。先写这个。
+  2. `Files:` 只列新增能力或行为变化的文件，每条一句说它改了什么。纯机械替换（同一处改法铺开到十几个文件）合并成一句，不要逐个列。
+  3. `Effects:` 对用户可见的影响。没有就不写这一段。
   4. `Tests:` 跑了什么，有就写，没有就不写这一段。
 - 短句优先。不写「我」，不写流水账，不复述 diff。
 - 手工折行，每行 75 列左右。
-- 一个提交只讲一件事。混进了别的工作，在 `What changed` 里单独一点交代它是什么、为什么一起进来。
+- 能不能拆，看改动重不重叠。两件事不碰同一处代码，就分开提交；共享同一处修改（为后一条预留的变量、接口）就合成一条，别拆。
+- 每个提交都要能单独编译、单独跑测试。上一个提交不得含有下一个提交的功能，前一条依赖后一条是事故。
 - 不写 emoji，不写 `Co-authored-by`。
 
 提交前把改动看一遍（`git status`、`git diff --stat`），确认 `prototype/tree-data.js` 这类导出数据没被带进去。
 
 **提交和推送都要单独允许**：用户没说「提交」就不 commit，没说「推」就不 push。改完、测完、汇报完就停在那里，不要自己判断「顺手提交一下比较好」。
+
+## 十、文件长度
+
+一个 `.rs` 文件的主逻辑不超过 300 行，`src/` 下一个自己写的 `.js` 文件也不超过 300 行。
+
+- 主逻辑指 `#[cfg(test)]` 之前的行。测试部分不计入。
+- `tests/` 目录下的文件整体是测试，不参与统计。
+- 超了就按职责拆成模块。不要靠删注释、压行、把多行表达式挤成一行来凑数——那只是把行数藏起来，复杂度没变。
+- 测试体比实现体长时，把测试挪到 `#[cfg(test)] mod tests;` 指向的同目录文件，主逻辑行数不受影响。
+- `src/vendor/` 是第三方库，不参与统计。
+
+提交前跑 `.\tools\check-lines.ps1`，它列出 Rust 与 `src/` 下 js 超过 300 行的文件和超出多少。有新增或改得更长的，先拆再提交。
+
 

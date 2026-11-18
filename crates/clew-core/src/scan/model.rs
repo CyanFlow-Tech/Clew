@@ -1,67 +1,14 @@
 //! Graph data model: cards (function/method/class) and call sites.
-//!
-//! This is the contract shape shared by the CLI and the future frontend, matching the prototype JSON one to one.
+
+pub mod kinds;
+
+pub use kinds::{CallKind, CardKind, Confidence, LineKind, SymbolKind, UnknownKind};
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-/// Kind of a definition as stored in the `symbol` table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SymbolKind {
-    Function,
-    Method,
-    Class,
-    /// Pseudo symbol standing for the module body (`<module>`)
-    Module,
-}
-
-impl SymbolKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SymbolKind::Function => "function",
-            SymbolKind::Method => "method",
-            SymbolKind::Class => "class",
-            SymbolKind::Module => "module",
-        }
-    }
-
-    /// Map a card kind to the symbol kind it is persisted as.
-    pub fn of_card(kind: CardKind) -> Self {
-        match kind {
-            CardKind::Class => SymbolKind::Class,
-            CardKind::Method => SymbolKind::Method,
-            CardKind::Function => SymbolKind::Function,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CardKind {
-    Function,
-    Method,
-    Class,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LineKind {
-    Stmt,
-    Call,
-    Branch,
-}
-
-impl LineKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            LineKind::Stmt => "stmt",
-            LineKind::Call => "call",
-            LineKind::Branch => "branch",
-        }
-    }
-}
+use crate::card::CardId;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Line {
@@ -110,61 +57,6 @@ pub struct Card {
     pub locals: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CallKind {
-    /// `foo()`
-    Name,
-    /// `self.foo()` / `cls.foo()`
-    #[serde(rename = "self")]
-    SelfRef,
-    /// `self.attr.foo()`
-    SelfAttr,
-    /// `obj.foo()`
-    Attr,
-    /// Anything else (chained, subscripted, ...)
-    Other,
-}
-
-impl CallKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            CallKind::Name => "name",
-            CallKind::SelfRef => "self",
-            CallKind::SelfAttr => "selfattr",
-            CallKind::Attr => "attr",
-            CallKind::Other => "other",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Confidence {
-    /// Same module / import / type inference / self. method
-    Exact,
-    /// Several implementations share the name; all candidates are listed
-    Poly,
-    /// Single match by name
-    Heur,
-    /// Builtin or library function
-    Builtin,
-    /// Unresolved
-    None,
-}
-
-impl Confidence {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Confidence::Exact => "exact",
-            Confidence::Poly => "poly",
-            Confidence::Heur => "heur",
-            Confidence::Builtin => "builtin",
-            Confidence::None => "none",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct Call {
     pub from: String,
@@ -197,8 +89,9 @@ pub struct Graph {
 }
 
 impl Graph {
+    /// 卡片身份的展示文本。构造只有 [`CardId`] 一处，这里保留旧签名方便调用点。
     pub fn card_id(module: &str, qualname: &str) -> String {
-        format!("{module}:{qualname}")
+        CardId::new(module, qualname).into_string()
     }
 
     pub fn stats(&self) -> Stats {
@@ -235,4 +128,84 @@ pub struct Stats {
     pub heur: usize,
     pub builtin: usize,
     pub none: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 写进库的字符串与从库里读回的值必须是同一套词：`as_str` 出去，
+    /// `FromStr` 回来，中间不需要任何地方再手写一遍 match。
+    macro_rules! round_trips {
+        ($ty:ty, $($value:expr),+ $(,)?) => {
+            $(
+                let v: $ty = $value;
+                let text = v.to_string();
+                assert_eq!(text, v.as_str(), "Display 与 as_str 不一致");
+                assert_eq!(text.parse::<$ty>(), Ok(v), "{} 读不回来", text);
+            )+
+        };
+    }
+
+    #[test]
+    fn every_kind_round_trips_through_its_stored_text() {
+        round_trips!(
+            SymbolKind,
+            SymbolKind::Function,
+            SymbolKind::Method,
+            SymbolKind::Class,
+            SymbolKind::Module,
+        );
+        round_trips!(
+            CardKind,
+            CardKind::Function,
+            CardKind::Method,
+            CardKind::Class,
+        );
+        round_trips!(
+            LineKind,
+            LineKind::Stmt,
+            LineKind::Call,
+            LineKind::Branch,
+        );
+        round_trips!(
+            CallKind,
+            CallKind::Name,
+            CallKind::SelfRef,
+            CallKind::SelfAttr,
+            CallKind::Attr,
+            CallKind::Other,
+        );
+        round_trips!(
+            Confidence,
+            Confidence::Exact,
+            Confidence::Poly,
+            Confidence::Heur,
+            Confidence::Builtin,
+            Confidence::None,
+        );
+    }
+
+    #[test]
+    fn serde_writes_the_same_text_as_the_database() {
+        assert_eq!(serde_json::to_string(&CallKind::SelfRef).unwrap(), "\"self\"");
+        assert_eq!(serde_json::to_string(&Confidence::Heur).unwrap(), "\"heur\"");
+        assert_eq!(serde_json::to_string(&SymbolKind::Module).unwrap(), "\"module\"");
+    }
+
+    #[test]
+    fn an_unknown_kind_is_an_error_not_a_silent_default() {
+        let err = "cal".parse::<LineKind>().unwrap_err();
+        assert_eq!(err.0, "cal");
+        assert_eq!("class".parse::<LineKind>().unwrap_err().0, "class");
+    }
+
+    #[test]
+    fn the_defaults_match_what_the_old_match_arms_fell_through_to() {
+        assert_eq!(LineKind::default(), LineKind::Stmt);
+        assert_eq!(CallKind::default(), CallKind::Other);
+        assert_eq!(Confidence::default(), Confidence::None);
+        assert_eq!(CardKind::default(), CardKind::Function);
+        assert_eq!(SymbolKind::default(), SymbolKind::Function);
+    }
 }

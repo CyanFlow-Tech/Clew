@@ -3,7 +3,10 @@
 use std::path::Path;
 
 /// Placeholder qualname used by module-level entry symbols.
-pub const MODULE_ENTRY_QUALNAME: &str = "<module>";
+///
+/// 定义在 [`crate::card`] 里——卡片身份是 `card` 模块的概念，这里只重新导出，
+/// 让原来的 `entry::MODULE_ENTRY_QUALNAME` 路径继续可用。
+pub use crate::card::MODULE_ENTRY_QUALNAME;
 
 /// Parse `[project.scripts]` from `pyproject.toml` and return `(module, qualname)` pairs.
 ///
@@ -27,8 +30,8 @@ pub fn scripts_from_pyproject(root: &Path) -> Vec<(String, String)> {
     scripts
         .values()
         .filter_map(|v| v.as_str())
-        .filter_map(|s| s.split_once(':'))
-        .map(|(module, func)| (module.trim().to_string(), func.trim().to_string()))
+        .filter_map(crate::card::CardId::parse)
+        .map(|id| (id.module().trim().to_string(), id.qualname().trim().to_string()))
         .collect()
 }
 
