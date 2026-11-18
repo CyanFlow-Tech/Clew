@@ -72,8 +72,8 @@ running. A blank window means that server is not up.
 | `crates/clew-core` | parsing (tree-sitter), call resolution, index storage, search |
 | `crates/clew-cli` | the `clew` command line; every capability is verifiable here first |
 | `src-tauri` | window-side commands (`src-tauri/src/main.rs`) and the Tauri config |
-| `src/` | frontend: `shell.js` is the shell and panels, `app.js` is the canvas, plain HTML + JS, no bundler, no npm |
-| `tools/` | dev server, CDP harnesses, preview scripts |
+| `src/` | frontend: `shell/` is the shell and panels, `app/` is the canvas, `shared/` the bits both use, `css/` the styles; native ES modules, no bundler, no npm |
+| `tools/` | dev server, CDP harnesses (both drive a Tauri stub, no preview mode) |
 | `prototype/` | standalone HTML mockups for UI experiments |
 | `bench/` | the performance baseline script |
 
@@ -87,9 +87,9 @@ That starts a static server on `http://127.0.0.1:1755` (with `Cache-Control: no-
 and runs the debug window against it, so `src/` is loaded at runtime instead of being
 baked into the binary.
 
-- **Editing html/js**: save, the window reloads itself within a second (it watches
-  `index.html`, `app.js`, `shell.js`, `themes.js`, and appends a version query so the
-  WebView cannot serve a cached script). `Ctrl+R` forces it.
+- **Editing html/js/css**: save, the window reloads itself within a second (it watches
+  every frontend file listed in `boot.js`, and dynamic imports carry a version query so
+  the WebView cannot serve a cached module). `Ctrl+R` forces it.
 - **Editing Rust**: stop the script and run it again. Debug builds are incremental and
   much faster than release.
 - `dev.ps1` also opens the WebView2 debugging port (9222 by default, `-Cdp 0` turns it
@@ -204,3 +204,6 @@ performance baseline those documents quote.
 ## License
 
 [MIT](LICENSE).
+
+
+

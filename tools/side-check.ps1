@@ -9,17 +9,20 @@ $root = Split-Path -Parent $PSScriptRoot
 $web = Join-Path $root "target\web"
 
 New-Item -ItemType Directory -Force -Path $web | Out-Null
-Copy-Item (Join-Path $root "src\shell.js") $web -Force
-Copy-Item (Join-Path $root "src\app.js") $web -Force
+Copy-Item (Join-Path $root "src\boot.js") $web -Force
 Copy-Item (Join-Path $root "src\themes.js") $web -Force
 Copy-Item (Join-Path $root "src\logo.png") $web -Force
+Copy-Item (Join-Path $root "src\css") $web -Recurse -Force
+Copy-Item (Join-Path $root "src\app") $web -Recurse -Force
+Copy-Item (Join-Path $root "src\shell") $web -Recurse -Force
+Copy-Item (Join-Path $root "src\shared") $web -Recurse -Force
 Copy-Item (Join-Path $root "src\vendor") $web -Recurse -Force
 
 # 真实数据：index 里的整棵树，由 clew tree --json 导出给桩用
 & (Join-Path $root "target\debug\clew.exe") tree $Project --db $Db --json |
   Out-File -FilePath (Join-Path $web "__tree.json") -Encoding utf8
 
-# 造一份测试页：shell.js 加载之前塞一个 Tauri 桩。侧栏走的是 desktop 分支
+# 造一份测试页：shell 模块加载之前塞一个 Tauri 桩。侧栏走的是 desktop 分支
 # （api.invoke("tree") / ("roots")），浏览器预览那条路根本不执行。
 $stub = @'
       const noopWin = {
@@ -103,12 +106,14 @@ $stub = @'
       window.__STUB_ENTRIES__ = [{ id: "reference.Arena:Arena", label: "reference.Arena:Arena" }];
 '@
 
-$html = Get-Content (Join-Path $root "src\index.html") -Raw
-# 桩必须在 index.html 里那段启动脚本之前，否则 boot() 走的是预览分支，
-# 没有项目路径，侧栏什么都不会去取
-$anchor = "  const api = window.__TAURI__ ? window.__TAURI__.core : null;"
-if (-not $html.Contains($anchor)) { throw "index.html 里找不到注入点" }
-$html = $html.Replace($anchor, $stub + "`r`n" + $anchor)
+# 桩必须插在引导脚本取 api 之前，否则 boot() 走的是预览分支，
+# 没有项目路径，侧栏什么都不会去取。引导脚本在 boot.js 里，
+# 所以这里产出一份带桩的 boot.js，再让 harness.html 指向它。
+$boot = Get-Content (Join-Path $root "src\boot.js") -Raw
+$anchor = "const api = window.__TAURI__.core;"
+if (-not $boot.Contains($anchor)) { throw "boot.js 里找不到注入点" }
+Set-Content -Path (Join-Path $web "harness-boot.js") -Value ($stub + "`r`n" + $boot) -Encoding UTF8
+$html = (Get-Content (Join-Path $root "src\index.html") -Raw).Replace('src="boot.js"', 'src="harness-boot.js"')
 Set-Content -Path (Join-Path $web "harness.html") -Value $html -Encoding UTF8
 
 $server = Start-Process -FilePath "python" -ArgumentList @("-m", "http.server", "$Port", "--directory", $web) -WindowStyle Hidden -PassThru
@@ -129,7 +134,7 @@ $check = @'
   window.addEventListener("error", (e) => errs.push(String(e.message)));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const S = window.__clewSide;
-  if (!S) return { fatal: "侧栏没有挂上，shell.js 里可能有异常" };
+  if (!S) return { fatal: "侧栏没有挂上，shell 模块里可能有异常" };
   const list = () => document.getElementById("sp-list");
   const rows = () => Array.from(document.querySelectorAll("#sp-list .sp-row"));
   const files = () => rows().filter((el) => el.dataset.mod);
@@ -346,3 +351,8 @@ Stop-Process -Id $edge.Id -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -match "$Cdp" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Remove-Item -Recurse -Force $profile, $checkPath -ErrorAction SilentlyContinue
+
+
+
+
+

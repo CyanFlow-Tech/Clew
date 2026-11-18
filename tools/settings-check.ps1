@@ -17,10 +17,13 @@ $root = Split-Path -Parent $PSScriptRoot
 $web = Join-Path $root "target\web"
 
 New-Item -ItemType Directory -Force -Path $web | Out-Null
-Copy-Item (Join-Path $root "src\shell.js") $web -Force
-Copy-Item (Join-Path $root "src\app.js") $web -Force
+Copy-Item (Join-Path $root "src\boot.js") $web -Force
 Copy-Item (Join-Path $root "src\themes.js") $web -Force
 Copy-Item (Join-Path $root "src\logo.png") $web -Force
+Copy-Item (Join-Path $root "src\css") $web -Recurse -Force
+Copy-Item (Join-Path $root "src\app") $web -Recurse -Force
+Copy-Item (Join-Path $root "src\shell") $web -Recurse -Force
+Copy-Item (Join-Path $root "src\shared") $web -Recurse -Force
 Copy-Item (Join-Path $root "src\index.html") $web -Force
 Copy-Item (Join-Path $root "src\vendor") $web -Recurse -Force
 Set-Content -Path (Join-Path $web "__clew_graph.json") -Value '{"cards":{},"calls":{},"entries":[]}' -Encoding UTF8
@@ -78,10 +81,11 @@ $stub = @'
       };
 '@
 
-$html = Get-Content (Join-Path $root "src\index.html") -Raw
-$anchor = "  const api = window.__TAURI__ ? window.__TAURI__.core : null;"
-if (-not $html.Contains($anchor)) { throw "index.html 里找不到注入点" }
-$html = $html.Replace($anchor, $stub + "`r`n" + $anchor)
+$boot = Get-Content (Join-Path $root "src\boot.js") -Raw
+$anchor = "const api = window.__TAURI__.core;"
+if (-not $boot.Contains($anchor)) { throw "boot.js 里找不到注入点" }
+Set-Content -Path (Join-Path $web "harness-boot.js") -Value ($stub + "`r`n" + $boot) -Encoding UTF8
+$html = (Get-Content (Join-Path $root "src\index.html") -Raw).Replace('src="boot.js"', 'src="harness-boot.js"')
 Set-Content -Path (Join-Path $web "settings-harness.html") -Value $html -Encoding UTF8
 
 $server = Start-Process -FilePath "python" -ArgumentList @("-m", "http.server", "$Port", "--directory", $web) -WindowStyle Hidden -PassThru
@@ -103,7 +107,7 @@ $check = @'
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const q = (sel) => document.querySelector(sel);
   const out = {};
-  if (!window.clewShell) return { fatal: "shell.js 没挂上" };
+  if (!window.clewShell) return { fatal: "shell 没挂上" };
 
   // 欢迎页那一份：导航点「设置」进去，项目列表让位，里面两块目录
   const navSpace = q('.w-nav [data-w-pane="space"]');
@@ -339,3 +343,8 @@ Stop-Process -Id $edge.Id -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -match "$Cdp" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Remove-Item -Recurse -Force $profile, $checkPath -ErrorAction SilentlyContinue
+
+
+
+
+
