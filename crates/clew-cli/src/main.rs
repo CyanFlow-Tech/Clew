@@ -145,18 +145,6 @@ enum Command {
         #[arg(long)]
         db: Option<PathBuf>,
     },
-    /// Write the whole graph as JSON, for opening the UI in a plain browser
-    Export {
-        /// Project root
-        project: PathBuf,
-        /// Output path; relative paths resolve against the current directory
-        #[arg(long, short)]
-        out: PathBuf,
-        /// Index path; defaults to the project space, relative paths resolve
-        /// against the project root
-        #[arg(long)]
-        db: Option<PathBuf>,
-    },
     /// Materialise module cards on demand (what a click does in the GUI)
     Materialize {
         /// Project root
@@ -222,7 +210,6 @@ fn main() -> anyhow::Result<()> {
         Command::Stats { project, db } => cmd::stats(project, db)?,
         Command::Args { project, qualname, line, db } => cmd::args(project, qualname, line, db)?,
         Command::Walk { project, entry, db } => cmd::walk(project, entry, db)?,
-        Command::Export { project, out, db } => cmd::export(project, out, db)?,
         Command::Materialize { project, modules, db } => cmd::materialize(project, modules, db)?,
         Command::Bench { project, steps, db } => cmd::bench(project, steps, db)?,
     }

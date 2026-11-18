@@ -63,44 +63,6 @@ pub struct Row {
     pub(crate) mask: u64,
 }
 
-/// 一个字符在掩码里的位置。字母、数字、下划线、点、斜杠之外一律返回 None，
-/// 调用方据此决定这次查询能不能用掩码提前排除。
-fn slot(c: char) -> Option<u32> {
-    match c {
-        'a'..='z' => Some(c as u32 - 'a' as u32),
-        '0'..='9' => Some(26 + c as u32 - '0' as u32),
-        '_' => Some(36),
-        '.' => Some(37),
-        '/' => Some(38),
-        '-' => Some(39),
-        _ => None,
-    }
-}
-
-fn mask_of(s: &str) -> u64 {
-    let mut m = 0u64;
-    for c in s.chars() {
-        if let Some(b) = slot(c) {
-            m |= 1 << b;
-        }
-    }
-    m
-}
-
-fn needle_mask(needle: &str) -> Option<u64> {
-    let mut m = 0u64;
-    for c in needle.chars() {
-        m |= 1 << slot(c)?;
-    }
-    Some(m)
-}
-
-pub struct Index {
-    pub modules: Vec<ModuleRef>,
-    pub rows: Vec<Row>,
-}
-
-
 /// 结果范围。自动识别只收扫描器认的入口与用户标记的，全部函数不限。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Scope {
@@ -153,4 +115,5 @@ impl Query {
         self.prefix.is_empty() && self.name.is_empty()
     }
 }
+
 

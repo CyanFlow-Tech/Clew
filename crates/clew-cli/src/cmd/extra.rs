@@ -1,31 +1,7 @@
 use std::path::PathBuf;
 
 
-use super::super::{display, ms, open_index};
-
-pub fn export(project: PathBuf, out: PathBuf, db: Option<PathBuf>) -> anyhow::Result<()> {
-            use std::io::Write;
-
-            let root = project.canonicalize()?;
-            let (conn, project_id) = open_index(&root, db)?;
-            let snap = clew_core::snapshot::snapshot(&conn, project_id)?;
-
-            if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
-                std::fs::create_dir_all(dir)?;
-            }
-            let mut file = std::io::BufWriter::new(std::fs::File::create(&out)?);
-            serde_json::to_writer(&mut file, &snap)?;
-            file.flush()?;
-            drop(file);
-
-            let bytes = std::fs::metadata(&out)?.len();
-            println!("out        {}", display(&out));
-            println!("cards      {}", snap.cards.len());
-            println!("calls      {}", snap.calls.len());
-            println!("entries    {}", snap.entries.len());
-            println!("size       {} KiB", bytes / 1024);
-    Ok(())
-}
+use super::super::{ms, open_index};
 
 pub fn materialize(project: PathBuf, modules: Vec<String>, db: Option<PathBuf>) -> anyhow::Result<()> {
             let root = project.canonicalize()?;
@@ -137,3 +113,4 @@ pub fn bench(project: PathBuf, steps: usize, db: Option<PathBuf>) -> anyhow::Res
             );
     Ok(())
 }
+
